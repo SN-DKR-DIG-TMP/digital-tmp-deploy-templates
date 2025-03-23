@@ -1,72 +1,123 @@
 ---
-- name: Lister tous les fichiers YAML dans le répertoire vars
-  find:
-    paths: "{{ playbook_dir }}/vars"
-    patterns: "*.yml"
-  register: found_files
-
-- name: Afficher les fichiers trouvés
+- name: Afficher les modules nginx
   debug:
-    var: found_files.files
-# Configuration du load balancer local (Nginx) - Optionnel
+    var: modules
+
+- name: Get current container versions
+  community.docker.docker_container_info:
+    name: "{{ project_name }}_{{ item.name }}_1"
+  register: container_versions
+  loop: "{{ modules }}"
+
+- name: Debug des images des containers
+  debug:
+    msg: "{{ container_versions.results | map(attribute='container.Config.Image', default='N/A') | list }}"
+
+- name: Extraire la liste des images des containers
+  set_fact:
+    container_images_list: >-
+      {{
+        container_versions.results
+        | selectattr('container.Config', 'defined')
+        | selectattr('container.Config.Image', 'defined')
+        | map(attribute='container.Config.Image')
+        | list
+      }}
+
+- name: Debug container_images_list
+  debug:
+    var: container_images_list
+
+- name: Filtrer les modules à installer ou redémarrer
+  set_fact:
+    modules_to_deploy: >-
+      {{
+        modules | rejectattr('image', 'in', container_images_list)
+                | list
+        +
+        modules | selectattr('force_restart', 'equalto', true)
+                | list
+      }}
+
+- name: Afficher les modules à déployer nginx
+  debug:
+    var: modules_to_deploy
+
+- name: Install Nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+  when: modules_to_deploy | length > 0
+
+- name: Lister les fichiers temporaires correspondant aux modules à déployer
+  ansible.builtin.find:
+    paths: "/etc/nginx/sites-available"
+    patterns: "digital_tmp_{{ item.name }}_*"
+    file_type: file
+  register: files_to_delete
+  loop: "{{ modules_to_deploy }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false
+  tags: nginx_cleanup
+  when: modules_to_deploy | length > 0
+
+- name: Suppression des fichiers dans sites-available
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ files_to_delete.results | map(attribute='files') | flatten }}"
+  when: item.files | length > 0
+  tags: nginx_cleanup
+
+- name: Suppression des liens dans sites-enabled
+  ansible.builtin.file:
+    path: "/etc/nginx/sites-enabled/{{ item.path | basename }}"
+    state: absent
+  loop: "{{ files_to_delete.results | map(attribute='files') | flatten }}"
+  when: item.files | length > 0
+  tags: nginx_cleanup
+
 - name: Generate Nginx configuration for each module
   template:
-    src: "{{ nginx_local.config_template }}"
-    dest: /etc/nginx/sites-available/{{ item.name }}.conf
+    src: templates/nginx.conf.j2
+    dest: /etc/nginx/sites-available/digital_tmp_{{ item.name }}.conf
     owner: root
     group: root
     mode: '0644'
-  loop: "{{ modules }}"
-  when: nginx_local.enabled | default(false)
+  loop: "{{ modules_to_deploy }}"
+  when: modules_to_deploy | length > 0
 
 - name: Create symbolic link in sites-enabled
   file:
-    src: /etc/nginx/sites-available/{{ item.name }}.conf
-    dest: /etc/nginx/sites-enabled/{{ item.name }}.conf
+    src: /etc/nginx/sites-available/digital_tmp_{{ item.name }}.conf
+    dest: /etc/nginx/sites-enabled/digital_tmp_{{ item.name }}.conf
     state: link
-  loop: "{{ modules }}"
-  when: nginx_local.enabled | default(false)
+  notify: Reload nginx
+  loop: "{{ modules_to_deploy }}"
+  when: modules_to_deploy | length > 0
 
-- name: Reload Nginx to apply changes
-  service:
-    name: nginx
-    state: reloaded
-  when: nginx_local.enabled | default(false)
 
-# Configuration de Certbot (optionnel)
 - name: Generate Certbot script
   template:
-    src: "{{ nginx_local.config_certbot }}"
+    src: templates/certbot.sh.j2
     dest: /tmp/certbot_{{ item.name }}.sh
     owner: root
     group: root
     mode: '0755'
-  loop: "{{ modules }}"
+  loop: "{{ modules_to_deploy }}"
   when: >
-    nginx_local.enabled | default(false) and
     item.ssl_enabled | default(false) and
     item.server_name is defined and item.server_name
 
 - name: Run Certbot script
   shell: /tmp/certbot_{{ item.name }}.sh
-  loop: "{{ modules }}"
+  loop: "{{ modules_to_deploy }}"
+  notify: Reload nginx
   when: >
-    nginx_local.enabled | default(false) and
     item.ssl_enabled | default(false) and
     item.server_name is defined and item.server_name
 
-- name: Deploy Nginx container as local load balancer
-  docker_container:
-    name: nginx
-    image: nginx:latest
-    state: started
-    restart: yes
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /etc/nginx/sites-enabled:/etc/nginx/conf.d
-      - /etc/letsencrypt:/etc/letsencrypt
-    networks:
-      - name: "{{ nginx_local.network }}"
-  when: nginx_local.enabled | default(false)
+
+
+

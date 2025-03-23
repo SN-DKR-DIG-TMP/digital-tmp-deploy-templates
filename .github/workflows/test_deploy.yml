@@ -1,0 +1,154 @@
+name: Deploy Modules with Ansible and Docker Container
+
+on:
+  workflow_call:
+    inputs:
+      deployment_file_path:
+        description: "Path to the deployment YAML file"
+        required: true
+        type: string
+      DOCKER_OWNER:
+        description: 'Docker image owner'
+        required: false
+        type: string
+      PROJECT_NAME:
+        description: 'Project name'
+        required: true
+        type: string
+    secrets:
+      CUSTOM_GITHUB_TOKEN:
+        description: 'GitHub token for authentication'
+        required: true
+      GITHUB_USERNAME:
+        description: 'GitHub username for authentication'
+        required: true
+      TEST_SECRET:
+        description: 'Test'
+        required: true
+
+jobs:
+
+  detect-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.setenv.outputs.environment }}
+    if: >
+      (
+        github.event_name == 'push' &&
+        github.ref_name == 'develop'
+      ) || (
+        github.event_name == 'workflow_dispatch' &&
+        startsWith(github.ref, 'refs/heads/release/')
+      )
+    steps:
+      - name: Déterminer l'environnement
+        id: setenv
+        env:
+          IS_DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
+          ENV_DEPLOY: ${{ github.event.inputs.env_deploy || '' }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$IS_DISPATCH" = "true" ]; then
+            if [ -z "$ENV_DEPLOY" ]; then
+              echo "::error::Paramètre manquant: env_deploy est requis pour workflow_dispatch"
+              exit 1
+            fi
+            echo "environment=$ENV_DEPLOY" >> $GITHUB_OUTPUT
+            echo "Environnement déterminé (mode manuel): $ENV_DEPLOY"
+          else
+            # push sur develop seulement
+            if [ "$GITHUB_REF_NAME" = "develop" ]; then
+              echo "environment=dev" >> $GITHUB_OUTPUT
+              echo "Environnement déterminé (develop): dev"
+            else
+              echo "environment=unknown" >> $GITHUB_OUTPUT
+              echo "Environnement inconnu pour la branche: $GITHUB_REF_NAME"
+            fi
+          fi
+        shell: bash
+
+  prepare-matrix:
+    runs-on: ubuntu-latest
+    environment: dev
+    needs: detect-environment
+    outputs:
+      matrix: ${{ steps.set.outputs.servers }}
+      detect_env: ${{ needs.detect-environment.outputs.environment }}
+    steps:
+
+      - name: Afficher l'environnement'
+        run: echo "Déploiement su l'environnement ${{ needs.detect-environment.outputs.environment }}"
+
+      - name: Afficher le serveur
+        run: echo "Servers ${{ vars.servers }}"
+
+      - name: Copier vars.servers dans une sortie
+        id: set
+        run: |
+          echo "Valeur brute reçue de vars.servers :"
+          echo "${{ vars.servers }}"
+          echo "${{ vars.SERVER_USER }}"
+          
+          # On écrit proprement dans GITHUB_OUTPUT
+          echo "servers<<EOF" >> $GITHUB_OUTPUT
+          echo '${{ vars.servers }}' >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Vérifier les secrets pour se connecter aux servers
+        run: |
+          
+          if [ -z "${{ secrets.TEST_SECRET }}" ]; then
+            echo " Le secret TEST_SECRET est requis mais vide ou non défini."
+            exit 1
+          fi
+
+  deploy:
+    needs: prepare-matrix
+    environment: ${{ needs.prepare-matrix.outputs.detect_env }}
+    env:
+      DOCKER_OWNER: ${{ inputs.DOCKER_OWNER }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        server: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
+
+    steps:
+
+      - name: Vérifier l'environnement déterminé
+        run: echo "ENV (déterminé) = ${{ needs.prepare-matrix.outputs.detect_env }}"
+      
+
+      - name: Checkout target code
+        uses: actions/checkout@v3
+
+      - name: Getting all files
+        run: ls
+
+      # Checkout du repo appelant (du repo appelant)
+      - name: Checkout the repo calling the workflow
+        uses: actions/checkout@v3
+        with:
+          repository: 'SN-DKR-DIG-TMP/digital-tmp-deploy-templates'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: deploy-templates
+
+      - name: Getting all files ansible
+        run: ls
+
+      - name: Afficher le serveur courant
+        run: echo "Déploiement sur serveur ${{ matrix.server.name }} à l'adresse ${{ matrix.server.ansible_host }}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible
+
+      - name: Install community.docker collection
+        run: |
+          ansible-galaxy collection install community.docker
+          ansible-galaxy collection install community.general
