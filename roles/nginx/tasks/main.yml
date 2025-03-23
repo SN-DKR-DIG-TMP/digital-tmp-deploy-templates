@@ -1,0 +1,72 @@
+---
+- name: Lister tous les fichiers YAML dans le répertoire vars
+  find:
+    paths: "{{ playbook_dir }}/vars"
+    patterns: "*.yml"
+  register: found_files
+
+- name: Afficher les fichiers trouvés
+  debug:
+    var: found_files.files
+# Configuration du load balancer local (Nginx) - Optionnel
+- name: Generate Nginx configuration for each module
+  template:
+    src: "{{ nginx_local.config_template }}"
+    dest: /etc/nginx/sites-available/{{ item.name }}.conf
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ modules }}"
+  when: nginx_local.enabled | default(false)
+
+- name: Create symbolic link in sites-enabled
+  file:
+    src: /etc/nginx/sites-available/{{ item.name }}.conf
+    dest: /etc/nginx/sites-enabled/{{ item.name }}.conf
+    state: link
+  loop: "{{ modules }}"
+  when: nginx_local.enabled | default(false)
+
+- name: Reload Nginx to apply changes
+  service:
+    name: nginx
+    state: reloaded
+  when: nginx_local.enabled | default(false)
+
+# Configuration de Certbot (optionnel)
+- name: Generate Certbot script
+  template:
+    src: "{{ nginx_local.config_certbot }}"
+    dest: /tmp/certbot_{{ item.name }}.sh
+    owner: root
+    group: root
+    mode: '0755'
+  loop: "{{ modules }}"
+  when: >
+    nginx_local.enabled | default(false) and
+    item.ssl_enabled | default(false) and
+    item.server_name is defined and item.server_name
+
+- name: Run Certbot script
+  shell: /tmp/certbot_{{ item.name }}.sh
+  loop: "{{ modules }}"
+  when: >
+    nginx_local.enabled | default(false) and
+    item.ssl_enabled | default(false) and
+    item.server_name is defined and item.server_name
+
+- name: Deploy Nginx container as local load balancer
+  docker_container:
+    name: nginx
+    image: nginx:latest
+    state: started
+    restart: yes
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/nginx/sites-enabled:/etc/nginx/conf.d
+      - /etc/letsencrypt:/etc/letsencrypt
+    networks:
+      - name: "{{ nginx_local.network }}"
+  when: nginx_local.enabled | default(false)

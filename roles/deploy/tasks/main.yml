@@ -1,0 +1,48 @@
+---
+- name: Lister tous les fichiers YAML dans le répertoire vars
+  find:
+    paths: "{{ playbook_dir }}/vars"
+    patterns: "*.yml"
+  register: found_files
+
+- name: Afficher les fichiers trouvés
+  debug:
+    var: found_files.files
+
+- name: Ensure Docker is installed
+  apt:
+    name: docker.io
+    state: present
+    update_cache: yes
+
+# Connexion au GitHub Container Registry
+- name: Log in to GitHub Container Registry
+  docker_login:
+    registry_url: ghcr.io
+    username: "{{ github_username }}"
+    password: "{{ github_token }}"
+
+# Déploiement des modules
+- name: Deploy or restart modules
+  docker_container:
+    name: "{{ item.name }}-{{ replica }}"
+    image: "ghcr.io/{{ github_username }}/{{ item.name }}:{{ item.version }}"
+    state: started
+    restart: yes
+    ports:
+      - "{{ item.external_port + replica }}:{{ item.internal_port }}"
+    networks:
+      - name: "{{ item.networks[0] }}"
+    env: "{{ item.environment | default({}) }}"
+    volumes: "{{ item.volumes | default([]) }}"
+    limits:
+      memory: "{{ item.resources.memory | default('512M') }}"
+      cpus: "{{ item.resources.cpu | default('0.5') }}"
+  when: >
+    item.force_restart | default(false) or
+    item.stdout == "" or
+    item.stdout.split(':')[-1] != item.version
+  loop: "{{ modules }}"
+  with_items: "{{ range(0, item.replicas) }}"
+  loop_control:
+    loop_var: replica

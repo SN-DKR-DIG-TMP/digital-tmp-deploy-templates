@@ -1,0 +1,119 @@
+name: Deploy Modules with Ansible and Docker Container
+
+on:
+  push:
+    branches: [ "main","develop", "preprod", "prod" ]
+  pull_request:
+    branches: [ "main","develop", "preprod", "prod" ]
+  workflow_call:
+    inputs:
+      servers:
+        description: 'List of servers in JSON format'
+        required: true
+        type: string
+      deployment_file_path:
+        description: "Path to the deployment YAML file"
+        required: true
+        type: string
+    secrets:
+      SSH_PRIVATE_KEY:
+        description: 'SSH key to connect server'
+        required: true
+      CUSTOM_GITHUB_TOKEN:
+        description: 'GitHub token for authentication'
+        required: true
+      GITHUB_USERNAME:
+        description: 'GitHub username for authentication'
+        required: true
+      SERVER_USER:
+        description: 'User to connect a server'
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        server: ${{ fromJson(inputs.servers) }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Getting all files
+      run: ls
+
+     # Checkout du repo appelant (du repo appelant)
+    - name: Checkout the repo calling the workflow
+      uses: actions/checkout@v3
+      with:
+        repository: 'SN-DKR-DIG-TMP/digital-tmp-deploy-templates'
+        token: ${{ secrets.GITHUB_TOKEN }}
+        path: templates
+
+    - name: Getting all files ansible
+      run: ls
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install Ansible
+      run: |
+        python -m pip install --upgrade pip
+        pip install ansible
+
+    - name: Install community.docker collection
+      run: |
+        ansible-galaxy collection install community.docker
+
+    - name: Getting all files
+      run: ls ../../
+    
+    - name: Getting all files
+      run: ls ../
+    
+    - name: Getting all files
+      run: ls
+
+    - name: Copy deployment file
+      run: cp ${{ inputs.deployment_file_path }} templates/deployment.yml
+
+    - name: Set up SSH Agent
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Generate inventory file for current server
+      run: |
+        mkdir -p inventory
+        cat <<EOF > inventory/inventory.ini
+        [servers]
+        ${MATRIX_SERVER_NAME} ansible_host=${MATRIX_SERVER_HOST} ansible_user=${{ secrets.SERVER_USER }}
+
+        [servers:vars]
+        ansible_python_interpreter=/usr/bin/python3
+        EOF
+      env:
+        MATRIX_SERVER_NAME: ${{ matrix.server.name }}
+        MATRIX_SERVER_HOST: ${{ matrix.server.ansible_host }}
+    
+    - name: Getting all files
+      run: ls ../
+  
+    - name: Getting all files
+      run: ls 
+
+    - name: Getting all files
+      run: ls templates/
+    
+    - name: Lire le contenu du fichier de déploiement
+      run: |
+        echo "Contenu du fichier de déploiement :"
+        cat templates/deployment.yml
+
+    - name: Run Ansible playbook for current server
+      run: |
+        ansible-playbook -i inventory/inventory.ini templates/playbook.yml \
+          --extra-vars "@templates/deployment.yml" \
+          --extra-vars "github_username=${{ secrets.GITHUB_USERNAME }} github_token=${{ secrets.CUSTOM_GITHUB_TOKEN }}"

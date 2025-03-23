@@ -1,0 +1,40 @@
+modules:
+  - name: module1
+    version: 1.2.3
+    external_port: 8080
+    internal_port: 3000
+    replicas: 2
+    force_restart: false
+    networks:
+      - my_network
+    resources:
+      memory: "512M"
+      cpu: "0.5"
+    volumes:
+      - /host/path:/container/path
+    environment:
+      ENV_VAR_1: "value1"
+      ENV_VAR_2: "value2"
+  - name: module2
+    version: 2.0.1
+    external_port: 8081
+    internal_port: 5000
+    replicas: 1
+    force_restart: true
+    networks:
+      - my_network
+    resources:
+      memory: "1G"
+      cpu: "1"
+    volumes:
+      - /host/path2:/container/path2
+    environment:
+      ENV_VAR_3: "value3"
+
+nginx_local:
+  enabled: false
+  ssl_enabled: false
+  external_port: 80
+  internal_port: 80
+  config_template: roles/deploy/templates/nginx.conf.j2
+  network: my_network
