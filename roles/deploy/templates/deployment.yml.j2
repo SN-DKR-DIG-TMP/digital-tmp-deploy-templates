@@ -1,0 +1,25 @@
+modules_with_image:
+{% for module in modules %}
+  - name: {{ module.name }}
+    version: {{ module.version }}
+    image: ghcr.io/{{github_owner}}/{{ module.name }}:{{ module.version }}
+    external_port: {{ module.external_port }}
+    internal_port: {{ module.internal_port }}
+    replicas: {{ module.replicas }}
+    force_restart: {{ module.force_restart }}
+    networks:
+{% for network in module.networks %}
+      - {{ network }}
+{% endfor %}
+    resources:
+      memory: {{ module.resources.memory }}
+      cpu: {{ module.resources.cpu }}
+    volumes:
+{% for volume in module.volumes %}
+      - {{ volume }}
+{% endfor %}
+    environment:
+{% for key, value in module.environment.items() %}
+      {{ key }}: "{{ value }}"
+{% endfor %}
+{% endfor %}

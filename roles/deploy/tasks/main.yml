@@ -1,17 +1,13 @@
 ---
-- name: Lister tous les fichiers YAML dans le répertoire vars
-  find:
-    paths: "{{ playbook_dir }}/vars"
-    patterns: "*.yml"
-  register: found_files
-
-- name: Afficher les fichiers trouvés
+- name: Afficher les modules
   debug:
-    var: found_files.files
+    var: modules
 
 - name: Ensure Docker is installed
   apt:
-    name: docker.io
+    name:
+      - docker.io
+      - docker-compose
     state: present
     update_cache: yes
 
@@ -22,27 +18,78 @@
     username: "{{ github_username }}"
     password: "{{ github_token }}"
 
-# Déploiement des modules
-- name: Deploy or restart modules
-  docker_container:
-    name: "{{ item.name }}-{{ replica }}"
-    image: "ghcr.io/{{ github_username }}/{{ item.name }}:{{ item.version }}"
-    state: started
-    restart: yes
-    ports:
-      - "{{ item.external_port + replica }}:{{ item.internal_port }}"
-    networks:
-      - name: "{{ item.networks[0] }}"
-    env: "{{ item.environment | default({}) }}"
-    volumes: "{{ item.volumes | default([]) }}"
-    limits:
-      memory: "{{ item.resources.memory | default('512M') }}"
-      cpus: "{{ item.resources.cpu | default('0.5') }}"
-  when: >
-    item.force_restart | default(false) or
-    item.stdout == "" or
-    item.stdout.split(':')[-1] != item.version
+- name: Create Docker networks
+  docker_network:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ modules | map(attribute='networks') | flatten | unique }}"
+  when: item is defined
+
+- name: Get current container versions
+  community.docker.docker_container_info:
+    name: "{{ project_name }}_{{ item.name }}_1"
+  register: container_versions
   loop: "{{ modules }}"
-  with_items: "{{ range(0, item.replicas) }}"
-  loop_control:
-    loop_var: replica
+
+- name: Debug des images des containers
+  debug:
+    msg: "{{ container_versions.results | map(attribute='container.Config.Image', default='N/A') | list }}"
+
+- name: Extraire la liste des images des containers
+  set_fact:
+    container_images_list: >-
+      {{
+        container_versions.results
+        | selectattr('container.Config', 'defined')
+        | selectattr('container.Config.Image', 'defined')
+        | map(attribute='container.Config.Image')
+        | list
+      }}
+
+- name: Debug container_images_list
+  debug:
+    var: container_images_list
+
+- name: Filtrer les modules à installer ou redémarrer
+  set_fact:
+    modules_to_deploy: >-
+      {{
+        modules | rejectattr('image', 'in', container_images_list)
+                | list
+        +
+        modules | selectattr('force_restart', 'equalto', true)
+                | list
+      }}
+
+- name: Afficher les modules à déployer
+  debug:
+    var: modules_to_deploy
+
+- name: Generate docker-compose.yml from template
+  template:
+    src: templates/docker-compose.j2
+    dest: /opt/docker-compose.yml
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Validate docker-compose.yml syntax
+  command: docker-compose -f /opt/docker-compose.yml config
+  register: compose_validation
+  changed_when: false
+  ignore_errors: true
+
+- name: Show validation errors if any
+  debug:
+    msg: "{{ compose_validation.stderr }}"
+  when: compose_validation.rc != 0
+
+- name: Deploy or restart modules with Docker Compose
+  community.docker.docker_compose:
+    project_src: /opt
+    pull: yes
+    project_name: "{{ project_name }}"
+    recreate: always
+    scale: "{{ modules | items2dict(key_name='name', value_name='replicas') }}"
+  when: compose_validation.rc == 0
+

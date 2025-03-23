@@ -15,6 +15,14 @@ on:
         description: "Path to the deployment YAML file"
         required: true
         type: string
+      DOCKER_OWNER:
+        description: 'Docker image owner'
+        required: false
+        type: string
+      PROJECT_NAME:
+        description: 'Project name'
+        required: true
+        type: string
     secrets:
       SSH_PRIVATE_KEY:
         description: 'SSH key to connect server'
@@ -31,6 +39,8 @@ on:
 
 jobs:
   deploy:
+    env:
+      DOCKER_OWNER:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -48,7 +58,7 @@ jobs:
       with:
         repository: 'SN-DKR-DIG-TMP/digital-tmp-deploy-templates'
         token: ${{ secrets.GITHUB_TOKEN }}
-        path: templates
+        path: deploy-templates
 
     - name: Getting all files ansible
       run: ls
@@ -66,30 +76,31 @@ jobs:
     - name: Install community.docker collection
       run: |
         ansible-galaxy collection install community.docker
+    
+    - name: Install community.general collection
+      run: |
+        ansible-galaxy collection install community.general
 
-    - name: Getting all files
-      run: ls ../../
-    
-    - name: Getting all files
-      run: ls ../
-    
-    - name: Getting all files
-      run: ls
+    - name: Debug installed collections
+      run: ansible-galaxy collection list
 
     - name: Copy deployment file
-      run: cp ${{ inputs.deployment_file_path }} templates/deployment.yml
+      run: cp ${{ inputs.deployment_file_path }} deployment.yml
 
     - name: Set up SSH Agent
       uses: webfactory/ssh-agent@v0.7.0
       with:
         ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
+    - name: Check SSH agent
+      run: ssh-add -l
+
     - name: Generate inventory file for current server
       run: |
         mkdir -p inventory
         cat <<EOF > inventory/inventory.ini
         [servers]
-        ${MATRIX_SERVER_NAME} ansible_host=${MATRIX_SERVER_HOST} ansible_user=${{ secrets.SERVER_USER }}
+        ${MATRIX_SERVER_NAME} ansible_host=${MATRIX_SERVER_HOST} ansible_user=${{ secrets.SERVER_USER }} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 
         [servers:vars]
         ansible_python_interpreter=/usr/bin/python3
@@ -98,22 +109,27 @@ jobs:
         MATRIX_SERVER_NAME: ${{ matrix.server.name }}
         MATRIX_SERVER_HOST: ${{ matrix.server.ansible_host }}
     
-    - name: Getting all files
-      run: ls ../
-  
-    - name: Getting all files
-      run: ls 
-
-    - name: Getting all files
-      run: ls templates/
-    
     - name: Lire le contenu du fichier de déploiement
       run: |
         echo "Contenu du fichier de déploiement :"
-        cat templates/deployment.yml
+        cat deployment.yml
+
+    - name: Configurer les variables d’environnement
+      run: |
+        if [ -z "${{ inputs.DOCKER_OWNER }}" ]  || [ "${{ inputs.DOCKER_OWNER }}" == "null" ]; then
+          echo "DOCKER_OWNER=$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+        else
+          echo "DOCKER_OWNER=${{ inputs.DOCKER_OWNER }}" >> $GITHUB_ENV
+        fi
+
+    # Optionnel: Vérifie que la connexion SSH fonctionne
+    - name: Test SSH connection with ansible
+      run: |
+        ansible ec2 -m ping --extra-vars "ansible_ssh_common_args='-A'"
+
 
     - name: Run Ansible playbook for current server
       run: |
-        ansible-playbook -i inventory/inventory.ini templates/playbook.yml \
-          --extra-vars "@templates/deployment.yml" \
-          --extra-vars "github_username=${{ secrets.GITHUB_USERNAME }} github_token=${{ secrets.CUSTOM_GITHUB_TOKEN }}"
+        ansible-playbook -i inventory/inventory.ini deploy-templates/playbook.yml  \
+          --extra-vars "@deployment.yml" \
+          --extra-vars "github_username=${{ secrets.GITHUB_USERNAME }} github_owner=${{ env.DOCKER_OWNER }} github_token=${{ secrets.CUSTOM_GITHUB_TOKEN }} project_name=${{ inputs.PROJECT_NAME }}"

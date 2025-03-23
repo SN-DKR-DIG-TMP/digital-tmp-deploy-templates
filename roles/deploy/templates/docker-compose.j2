@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+{% for module in modules %}
+  {{ module.name }}:
+    image: "{{ module.image }}"
+    restart: always
+{% if module.replicas > 1 %}
+    ports:
+      - "{{ module.external_port }}-{{ module.external_port + module.replicas - 1 }}:{{ module.internal_port }}"
+{% else %}
+    ports:
+      - "{{ module.external_port }}:{{ module.internal_port }}"
+{% endif %}
+    networks:
+{% for network in module.networks %}
+      - {{ network }}
+{% endfor %}
+    environment:
+{% for key, value in module.environment.items() %}
+      {{ key }}: "{{ value }}"
+{% endfor %}
+{% if module.volumes %}
+    volumes:
+{% for volume in module.volumes %}
+      - "{{ volume }}"
+{% endfor %}
+{% endif %}
+    deploy:
+      resources:
+        limits:
+          memory: "{{ module.resources.memory | default('512M') }}"
+          cpus: "{{ module.resources.cpu | default('0.5') }}"
+{% endfor %}
+
+{% if network_values %}
+networks:
+{% for network in network_values %}
+  {{ network }}:
+    driver: bridge
+{% endfor %}
+{% endif %}

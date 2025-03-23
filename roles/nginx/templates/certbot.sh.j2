@@ -5,7 +5,7 @@ apt-get update
 apt-get install -y certbot python3-certbot-nginx
 
 # Obtenir un certificat SSL pour le module
-certbot --nginx -d {{ module.server_name }} --non-interactive --agree-tos --email your-email@example.com
+certbot --nginx -d {{ item.server_name }} --non-interactive --agree-tos --email khoutechdev@gmail.com
 
 # Configurer le renouvellement automatique
 echo "0 0 * * * root certbot renew --quiet" >> /etc/cron.d/certbot

@@ -1,7 +1,10 @@
-- hosts: all
+- name: Install my webserver
+  hosts: all
   become: yes
   vars_files:
     - deployment.yml
   roles:
-    - deploy
-    - nginx
+    - role: deploy
+
+    - role: nginx
+      when: nginx_local.enabled | default(false)
