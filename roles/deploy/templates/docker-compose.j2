@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-{% for module in modules %}
+{% for module in modules_to_deploy %}
   {{ module.name }}:
     image: "{{ module.image }}"
     restart: always

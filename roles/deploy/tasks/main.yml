@@ -3,6 +3,10 @@
   debug:
     var: modules
 
+- name: Afficher les secrets
+  debug:
+    var: secrets
+
 - name: Ensure Docker is installed
   apt:
     name:
@@ -50,18 +54,33 @@
   debug:
     var: container_images_list
 
-- name: Filtrer les modules à installer ou redémarrer
+- name: Filtrer les modules à installer ou redémarrer (sans doublons)
   set_fact:
     modules_to_deploy: >-
       {{
-        modules | rejectattr('image', 'in', container_images_list)
-                | list
-        +
-        modules | selectattr('force_restart', 'equalto', true)
-                | list
+        (
+          modules | rejectattr('image', 'in', container_images_list)
+                  + 
+          modules | selectattr('force_restart', 'equalto', true)
+        ) | unique(attribute='name') | list
       }}
 
+- name: Valider qu'il n'y a pas de doublons
+  assert:
+    that:
+      - modules_to_deploy | map(attribute='name') | list == (modules_to_deploy | map(attribute='name') | unique | list)
+    fail_msg: "ERREUR : Doublons détectés dans modules_to_deploy"
+
+
 - name: Afficher les modules à déployer
+  debug:
+    var: modules_to_deploy
+
+- name: Appliquer les secrets
+  set_fact:
+    modules_to_deploy: "{{ modules_to_deploy | inject_secrets(secrets) }}"
+
+- name: Afficher les modules à déployer apres mise à jour des secrets
   debug:
     var: modules_to_deploy
 
@@ -84,12 +103,19 @@
     msg: "{{ compose_validation.stderr }}"
   when: compose_validation.rc != 0
 
+
+- name: Fail if docker-compose.yml is invalid
+  fail:
+    msg: "docker-compose.yml validation failed, see previous error."
+  when: compose_validation.rc != 0
+
 - name: Deploy or restart modules with Docker Compose
   community.docker.docker_compose:
     project_src: /opt
     pull: yes
     project_name: "{{ project_name }}"
     recreate: always
-    scale: "{{ modules | items2dict(key_name='name', value_name='replicas') }}"
+    scale: "{{ modules_to_deploy | items2dict(key_name='name', value_name='replicas') }}"
   when: compose_validation.rc == 0
+
 

@@ -5,9 +5,10 @@
     workspace_root: "{{ playbook_dir }}/.."
   vars_files:
     - deployment.yml
+    - module_secrets.yml
   roles:
     - role: extra_files
-    #- role: deploy
+    - role: deploy
 
-    #- role: nginx
-    #  when: nginx_local.enabled | default(false)
+    - role: nginx
+      when: nginx_local.enabled | default(false)

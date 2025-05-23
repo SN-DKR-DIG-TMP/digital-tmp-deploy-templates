@@ -53,6 +53,9 @@ on:
       SSH_PRIVATE_KEY:
         description: 'Private key for env'
         required: true
+      MODULE_SECRETS:
+        description: "Les variables d'environnements des modules"
+        required: true
 
 jobs:
 
@@ -210,8 +213,18 @@ jobs:
         run: |
           ansible -i inventory/inventory.ini servers -m ping
 
+      - name: Écrire le secret YAML dans un fichier
+        run: |
+          echo "${{ secrets.MODULE_SECRETS }}" > module_secrets.yml
+
+      - name: Les variables d'env des modules
+        run: |
+          echo "Les variables d'env des modules :"
+          cat module_secrets.yml
+
       - name: Run Ansible playbook for current server
         run: |
           ansible-playbook -i inventory/inventory.ini deploy-templates/playbook.yml  \
           --extra-vars "@deployment.yml" \
+          --extra-vars "@module_secrets.yml" \
           --extra-vars "github_username=${{ secrets.GITHUB_USERNAME }} github_owner=${{ env.DOCKER_OWNER }} github_token=${{ secrets.CUSTOM_GITHUB_TOKEN }} project_name=${{ inputs.PROJECT_NAME }} environment_deploy=${{ inputs.environment }}"
