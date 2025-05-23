@@ -1,0 +1,56 @@
+---
+- name: Afficher les templates
+  debug:
+    var: templates
+
+- name: Lister fichiers dans workspace local
+  command: ls -1 "{{ workspace_root }}/{{ item.source | dirname }}"
+  register: fichiers_locaux
+  delegate_to: localhost
+  loop: "{{ templates[environment_deploy] }}"
+  when: templates[environment_deploy] is defined and templates[environment_deploy] | length > 0
+
+
+- name: Afficher les fichiers listés localement
+  debug:
+    var: fichiers_locaux.results
+
+- name: Debug chemin dossier à créer
+  debug:
+    msg: >-
+      {{ '/' + project_name + (item.dest | dirname) if item.dest.startswith('/') else '/' + project_name + '/' + (item.dest | dirname) }}
+  loop: "{{ templates[environment_deploy] }}"
+  when: templates[environment_deploy] is defined
+
+
+- name: Créer les dossiers distants pour les templates
+  become: yes
+  file:
+    path: >-
+      {{ '/' + project_name + (item.dest | dirname) if item.dest.startswith('/') else '/' + project_name + '/' + (item.dest | dirname) }}
+    state: directory
+    owner: root
+    group: root
+    mode: '0777'
+  loop: "{{ templates[environment_deploy] }}"
+  when: templates[environment_deploy] is defined
+
+- name: Debug chemin source et destination
+  debug:
+    msg: |
+      SRC: {{ workspace_root }}/{{ item.source }}
+      DEST: {{ '/' + project_name + item.dest if item.dest.startswith('/') else '/' + project_name + '/' + item.dest }}
+  loop: "{{ templates[environment_deploy] }}"
+  when: templates[environment_deploy] is defined
+
+- name: Copier les fichiers templates de l’environnement "{{ environment_deploy }}"
+  become: yes
+  copy:
+    src: "{{ workspace_root }}/{{ item.source }}"
+    dest: >-
+      {{ '/' + project_name + item.dest if item.dest.startswith('/') else '/' + project_name + '/' + item.dest }}
+    owner: root
+    group: root
+    mode: '0777'
+  loop: "{{ templates[environment_deploy] }}"
+  when: templates[environment_deploy] is defined

@@ -15,6 +15,31 @@ on:
         description: 'Project name'
         required: true
         type: string
+      PRODUCT_RELEASE_VERSION:
+        description: Version du projet à releaser
+        required: false
+        type: string
+        default: ""
+      released:
+        description: Indiquer si la release doit etre lancer
+        required: false
+        default: false
+        type: boolean
+      environment_approved:
+        description: 'environment for manual approved '
+        required: false
+        type: string
+        default: "manual-approval"
+      environment:
+        description: 'environment for deploy '
+        required: false
+        type: string
+        default: "unknown"
+      workflow_file:
+        description: 'Nom du fichier du workflow'
+        required: false
+        default: 'build.yml'
+        type: string
     secrets:
       CUSTOM_GITHUB_TOKEN:
         description: 'GitHub token for authentication'
@@ -22,62 +47,55 @@ on:
       GITHUB_USERNAME:
         description: 'GitHub username for authentication'
         required: true
-      TEST_SECRET:
-        description: 'Test'
+      MAVEN_PAT:
+        description: 'GitHub MAVEN_PAT'
+        required: true
+      SSH_PRIVATE_KEY:
+        description: 'Private key for env'
         required: true
 
 jobs:
 
-  detect-environment:
-    runs-on: ubuntu-latest
-    outputs:
-      environment: ${{ steps.setenv.outputs.environment }}
-    if: >
-      (
-        github.event_name == 'push' &&
-        github.ref_name == 'develop'
-      ) || (
-        github.event_name == 'workflow_dispatch' &&
-        startsWith(github.ref, 'refs/heads/release/')
-      )
-    steps:
-      - name: Déterminer l'environnement
-        id: setenv
-        env:
-          IS_DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
-          ENV_DEPLOY: ${{ github.event.inputs.env_deploy || '' }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: |
-          if [ "$IS_DISPATCH" = "true" ]; then
-            if [ -z "$ENV_DEPLOY" ]; then
-              echo "::error::Paramètre manquant: env_deploy est requis pour workflow_dispatch"
-              exit 1
-            fi
-            echo "environment=$ENV_DEPLOY" >> $GITHUB_OUTPUT
-            echo "Environnement déterminé (mode manuel): $ENV_DEPLOY"
-          else
-            # push sur develop seulement
-            if [ "$GITHUB_REF_NAME" = "develop" ]; then
-              echo "environment=dev" >> $GITHUB_OUTPUT
-              echo "Environnement déterminé (develop): dev"
-            else
-              echo "environment=unknown" >> $GITHUB_OUTPUT
-              echo "Environnement inconnu pour la branche: $GITHUB_REF_NAME"
-            fi
-          fi
-        shell: bash
+  call-build:
+    name: build
+    uses: SN-DKR-DIG-TMP/digital-tmp-workflow-templates/.github/workflows/template-deploy-global.yml@main
+    with:
+      workflow_file: ${{ inputs.environment_approved }}
+      environment_approved: ${{ inputs.environment_approved }}
+      released: ${{ inputs.released }}
+      PRODUCT_RELEASE_VERSION: ${{ inputs.PRODUCT_RELEASE_VERSION }}
+    secrets:
+      GITHUB_USERNAME: ${{ secrets.GITHUB_USERNAME }}
+      CUSTOM_GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+      MAVEN_PAT: ${{ secrets.MAVEN_PAT }}
 
   prepare-matrix:
+    env:
+      IS_DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
+      ENV_DEPLOY: ${{ inputs.env_deploy || '' }}
+      GITHUB_REF_NAME: ${{ github.ref_name }}
+    if: |
+      inputs.environment != '' && inputs.environment != 'unknown' &&
+      (
+        github.ref == 'refs/heads/develop' ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          (
+            startsWith(github.ref, 'refs/heads/release/') ||
+            github.ref == 'refs/heads/develop'
+          )
+        )
+      )
     runs-on: ubuntu-latest
-    environment: dev
-    needs: detect-environment
+    environment: ${{ inputs.environment }}
+    needs: call-build
     outputs:
       matrix: ${{ steps.set.outputs.servers }}
-      detect_env: ${{ needs.detect-environment.outputs.environment }}
+      detect_env: ${{ inputs.environment }}
     steps:
 
       - name: Afficher l'environnement'
-        run: echo "Déploiement su l'environnement ${{ needs.detect-environment.outputs.environment }}"
+        run: echo "Déploiement su l'environnement ${{ inputs.environment }}"
 
       - name: Afficher le serveur
         run: echo "Servers ${{ vars.servers }}"
@@ -94,17 +112,9 @@ jobs:
           echo '${{ vars.servers }}' >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Vérifier les secrets pour se connecter aux servers
-        run: |
-          
-          if [ -z "${{ secrets.TEST_SECRET }}" ]; then
-            echo " Le secret TEST_SECRET est requis mais vide ou non défini."
-            exit 1
-          fi
-
   deploy:
     needs: prepare-matrix
-    environment: ${{ needs.prepare-matrix.outputs.detect_env }}
+    environment: ${{ inputs.environment }}
     env:
       DOCKER_OWNER: ${{ inputs.DOCKER_OWNER }}
     runs-on: ubuntu-latest
@@ -152,3 +162,56 @@ jobs:
         run: |
           ansible-galaxy collection install community.docker
           ansible-galaxy collection install community.general
+
+      - name: Copy deployment file
+        run: cp ${{ inputs.deployment_file_path }} deployment.yml
+
+      - name: Set up SSH Agent
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Check SSH agent
+        run: ssh-add -l
+
+      - name: Generate inventory file for current server
+        run: |
+          mkdir -p inventory
+          cat <<EOF > inventory/inventory.ini
+          [servers]
+          ${MATRIX_SERVER_NAME} ansible_host=${MATRIX_SERVER_HOST} ansible_user=${{ vars.SERVER_USER }} ansible_ssh_common_args='-A -o StrictHostKeyChecking=no'
+
+          [servers:vars]
+          ansible_python_interpreter=/usr/bin/python3
+          EOF
+        env:
+          MATRIX_SERVER_NAME: ${{ matrix.server.name }}
+          MATRIX_SERVER_HOST: ${{ matrix.server.ansible_host }}
+
+      - name: Lire le contenu du fichier de déploiement
+        run: |
+          echo "Contenu du fichier de déploiement :"
+          cat deployment.yml
+
+      - name: Configurer les variables d’environnement
+        run: |
+          if [ -z "${{ inputs.DOCKER_OWNER }}" ]  || [ "${{ inputs.DOCKER_OWNER }}" == "null" ]; then
+            echo "DOCKER_OWNER=$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+          else
+            echo "DOCKER_OWNER=${{ inputs.DOCKER_OWNER }}" >> $GITHUB_ENV
+          fi
+
+      - name: Afficher le fichier inventory
+        run: |
+          echo "Contenu du fichier inventory/inventory.ini :"
+          cat inventory/inventory.ini
+
+      - name: Test SSH connection with ansible
+        run: |
+          ansible -i inventory/inventory.ini servers -m ping
+
+      - name: Run Ansible playbook for current server
+        run: |
+          ansible-playbook -i inventory/inventory.ini deploy-templates/playbook.yml  \
+          --extra-vars "@deployment.yml" \
+          --extra-vars "github_username=${{ secrets.GITHUB_USERNAME }} github_owner=${{ env.DOCKER_OWNER }} github_token=${{ secrets.CUSTOM_GITHUB_TOKEN }} project_name=${{ inputs.PROJECT_NAME }} environment_deploy=${{ inputs.environment }}"

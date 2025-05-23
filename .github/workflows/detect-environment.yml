@@ -1,0 +1,43 @@
+# .github/workflows/detect-environment.yml
+on:
+  workflow_call:
+    inputs:
+      env_deploy:
+        description: "Environnement demandé (manuellement)"
+        required: false
+        type: string
+    outputs:
+      environment:
+        description: "Nom de l'environnement (ex: dev, prod)"
+        value: ${{ jobs.detect.outputs.environment }}
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.setenv.outputs.environment }}
+    steps:
+      - name: Déterminer l'environnement
+        id: setenv
+        env:
+          IS_DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
+          ENV_DEPLOY: ${{ inputs.env_deploy || '' }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$IS_DISPATCH" = "true" ]; then
+            if [ -z "$ENV_DEPLOY" ]; then
+              echo "environment=unknown" >> $GITHUB_OUTPUT
+              echo "::error::Paramètre manquant: env_deploy est requis pour workflow_dispatch"
+            fi
+            echo "environment=$ENV_DEPLOY" >> $GITHUB_OUTPUT
+            echo "Environnement déterminé (manuel): $ENV_DEPLOY"
+          else
+            if [ "$GITHUB_REF_NAME" = "develop" ]; then
+              echo "environment=dev" >> $GITHUB_OUTPUT
+              echo "Environnement déterminé (develop): dev"
+            else
+              echo "environment=unknown" >> $GITHUB_OUTPUT
+              echo "::error::Environnement inconnu pour la branche: $GITHUB_REF_NAME"
+              exit 1
+            fi
+          fi
