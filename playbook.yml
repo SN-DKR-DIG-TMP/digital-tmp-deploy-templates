@@ -3,9 +3,6 @@
   become: yes
   vars:
     workspace_root: "{{ playbook_dir }}/.."
-  vars_files:
-    - deployment.yml
-    - module_secrets.yml
   roles:
     - role: extra_files
     - role: filter_modules

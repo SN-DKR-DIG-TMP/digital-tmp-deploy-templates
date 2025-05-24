@@ -1,0 +1,14 @@
+resources:
+
+nginx_local:
+  enabled: false
+  ssl_enabled: false
+  external_port: 80
+  internal_port: 80
+  config_template: roles/deploy/templates/nginx.conf.j2
+  network: my_network
+
+templates:
+  dev:
+    - source: templates/dev/portail-web/config.json
+      dest: opt/adp/portail-web/config.json

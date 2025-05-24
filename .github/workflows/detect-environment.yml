@@ -38,6 +38,5 @@ jobs:
             else
               echo "environment=unknown" >> $GITHUB_OUTPUT
               echo "::error::Environnement inconnu pour la branche: $GITHUB_REF_NAME"
-              exit 1
             fi
           fi

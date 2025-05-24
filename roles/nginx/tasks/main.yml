@@ -43,6 +43,16 @@
     mode: '0644'
   loop: "{{ modules_to_deploy }}"
   when: modules_to_deploy | length > 0
+  no_log: true
+
+- name: Show module details being processed
+  debug:
+    msg: >-
+      Module: {{ item.name }},
+      External Port: {{ item.external_port }},
+      Internal Port: {{ item.internal_port }},
+      Replicas: {{ item.replicas }}
+  loop: "{{ modules_to_deploy }}"
 
 - name: Create symbolic link in sites-enabled
   file:

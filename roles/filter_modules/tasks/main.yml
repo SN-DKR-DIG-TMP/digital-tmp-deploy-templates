@@ -1,17 +1,31 @@
 
+- name: Combine project and resource projects
+  set_fact:
+    modules: "{{ projects | map('combine_with_resource', resources) | list }}"
+
+- name: Debug merged modules
+  debug:
+    var: modules
+  when: debug_mode | bool
+
 - name: Afficher les modules (nom et image) ensemble
   debug:
     msg: "{{ modules | map(attribute='name') | list | zip(modules | map(attribute='image') | list) | map('join', ' ➜ ') | list }}"
 
 - name: Get current container versions
   community.docker.docker_container_info:
-    name: "{{ item.name }}_1"
+    name: "{{ project_name }}_{{ item.name }}_1"
   register: container_versions
   loop: "{{ modules }}"
+  #when: debug_mode | bool
+  no_log: "{{ not debug_mode | bool }}"
 
-- name: Debug des images des containers
+- name: Debug du nom et de l'image de chaque conteneur
   debug:
-    msg: "{{ container_versions.results | map(attribute='container.Config.Image', default='N/A') | list }}"
+    msg: "{{ item.item.name }} => {{ item.container.Config.Image if item.container is defined else 'container info missing' }}"
+  loop: "{{ container_versions.results | rejectattr('container', 'none') | list }}"
+  when: not debug_mode | bool
+
 
 - name: Extraire la liste des images des containers
   set_fact:
@@ -23,6 +37,37 @@
         | map(attribute='container.Config.Image')
         | list
       }}
+
+- name: Afficher container_images_list
+  debug:
+    msg: "{{ container_images_list }}"
+
+- name: Afficher les modules à déployer (nom et image)
+  debug:
+    msg: >-
+      {{
+        modules
+        | rejectattr('image', 'in', container_images_list)
+        | map(attribute='name')
+        | zip(
+            modules
+            | rejectattr('image', 'in', container_images_list)
+            | map(attribute='image')
+          )
+        | map('join', ' => ')
+        | list
+      }}
+
+- name: Afficher les noms des modules à redémarrer de force
+  debug:
+    msg: >-
+      {{
+        modules
+        | selectattr('force_restart', 'equalto', true)
+        | map(attribute='name')
+        | list
+      }}
+
 
 - name: Filtrer les modules à installer ou redémarrer (sans doublons)
   set_fact:
@@ -40,7 +85,6 @@
     that:
       - modules_to_deploy | map(attribute='name') | list == (modules_to_deploy | map(attribute='name') | unique | list)
     fail_msg: "ERREUR : Doublons détectés dans modules_to_deploy"
-
 
 - name: Afficher les noms des modules à déployer
   debug:
