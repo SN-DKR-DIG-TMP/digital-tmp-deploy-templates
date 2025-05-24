@@ -5,7 +5,7 @@
 
 - name: Get current container versions
   community.docker.docker_container_info:
-    name: "{{ project_name }}_{{ item.name }}_1"
+    name: "{{ item.name }}_1"
   register: container_versions
   loop: "{{ modules }}"
 

@@ -62,7 +62,7 @@
   community.docker.docker_compose:
     project_src: /opt
     pull: yes
-    project_name: "{{ project_name }}"
+    # project_name: "{{ project_name }}"
     recreate: always
     scale: "{{ modules_to_deploy | items2dict(key_name='name', value_name='replicas') }}"
   when: compose_validation.rc == 0
