@@ -1,11 +1,12 @@
 ---
-- name: Afficher les modules
+- name: Générer une liste de listes avec nom et ses clés
   debug:
-    var: modules
-
-- name: Afficher les secrets
-  debug:
-    var: secrets
+    msg: >-
+      {{
+        secrets | map(
+          lambda s: [s.name] + (s | dict2items | map(attribute='key') | reject('equalto', 'name') | list)
+        ) | list
+      }}
 
 - name: Ensure Docker is installed
   apt:
@@ -29,60 +30,9 @@
   loop: "{{ modules | map(attribute='networks') | flatten | unique }}"
   when: item is defined
 
-- name: Get current container versions
-  community.docker.docker_container_info:
-    name: "{{ project_name }}_{{ item.name }}_1"
-  register: container_versions
-  loop: "{{ modules }}"
-
-- name: Debug des images des containers
-  debug:
-    msg: "{{ container_versions.results | map(attribute='container.Config.Image', default='N/A') | list }}"
-
-- name: Extraire la liste des images des containers
-  set_fact:
-    container_images_list: >-
-      {{
-        container_versions.results
-        | selectattr('container.Config', 'defined')
-        | selectattr('container.Config.Image', 'defined')
-        | map(attribute='container.Config.Image')
-        | list
-      }}
-
-- name: Debug container_images_list
-  debug:
-    var: container_images_list
-
-- name: Filtrer les modules à installer ou redémarrer (sans doublons)
-  set_fact:
-    modules_to_deploy: >-
-      {{
-        (
-          modules | rejectattr('image', 'in', container_images_list)
-                  + 
-          modules | selectattr('force_restart', 'equalto', true)
-        ) | unique(attribute='name') | list
-      }}
-
-- name: Valider qu'il n'y a pas de doublons
-  assert:
-    that:
-      - modules_to_deploy | map(attribute='name') | list == (modules_to_deploy | map(attribute='name') | unique | list)
-    fail_msg: "ERREUR : Doublons détectés dans modules_to_deploy"
-
-
-- name: Afficher les modules à déployer
-  debug:
-    var: modules_to_deploy
-
 - name: Appliquer les secrets
   set_fact:
     modules_to_deploy: "{{ modules_to_deploy | inject_secrets(secrets) }}"
-
-- name: Afficher les modules à déployer apres mise à jour des secrets
-  debug:
-    var: modules_to_deploy
 
 - name: Generate docker-compose.yml from template
   template:
@@ -102,7 +52,6 @@
   debug:
     msg: "{{ compose_validation.stderr }}"
   when: compose_validation.rc != 0
-
 
 - name: Fail if docker-compose.yml is invalid
   fail:

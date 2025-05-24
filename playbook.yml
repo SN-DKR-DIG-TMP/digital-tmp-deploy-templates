@@ -8,7 +8,7 @@
     - module_secrets.yml
   roles:
     - role: extra_files
+    - role: filter_modules
     - role: deploy
-
     - role: nginx
       when: nginx_local.enabled | default(false)

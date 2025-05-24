@@ -20,16 +20,16 @@ on:
         required: false
         type: string
         default: ""
+      deploy:
+        description: Lancer le déploiement pour le lancement manuel
+        required: false
+        default: false
+        type: boolean
       released:
         description: Indiquer si la release doit etre lancer
         required: false
         default: false
         type: boolean
-      environment_approved:
-        description: 'environment for manual approved '
-        required: false
-        type: string
-        default: "manual-approval"
       environment:
         description: 'environment for deploy '
         required: false
@@ -64,7 +64,7 @@ jobs:
     uses: SN-DKR-DIG-TMP/digital-tmp-workflow-templates/.github/workflows/template-deploy-global.yml@main
     with:
       workflow_file: ${{ inputs.environment_approved }}
-      environment_approved: ${{ inputs.environment_approved }}
+      environment_approved: 'manual'
       released: ${{ inputs.released }}
       PRODUCT_RELEASE_VERSION: ${{ inputs.PRODUCT_RELEASE_VERSION }}
     secrets:
@@ -80,9 +80,12 @@ jobs:
     if: |
       inputs.environment != '' && inputs.environment != 'unknown' &&
       (
-        github.ref == 'refs/heads/develop' ||
         (
-          github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/develop' && 
+          github.event_name == 'push'
+        ) ||
+        (
+          github.event_name == 'workflow_dispatch' && inputs.deploy && 
           (
             startsWith(github.ref, 'refs/heads/release/') ||
             github.ref == 'refs/heads/develop'
@@ -216,11 +219,6 @@ jobs:
       - name: Écrire le secret YAML dans un fichier
         run: |
           echo "${{ secrets.MODULE_SECRETS }}" > module_secrets.yml
-
-      - name: Les variables d'env des modules
-        run: |
-          echo "Les variables d'env des modules :"
-          cat module_secrets.yml
 
       - name: Run Ansible playbook for current server
         run: |
