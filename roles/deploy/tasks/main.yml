@@ -1,12 +1,26 @@
 ---
-- name: Générer une liste de listes avec nom et ses clés
-  debug:
-    msg: >-
+- name: Initialiser la liste transformée
+  set_fact:
+    secrets_summary: []
+
+- name: Générer liste avec valeur name + clés autres champs (sans valeurs)
+  set_fact:
+    secrets_summary: >-
       {{
-        secrets | map(
-          lambda s: [s.name] + (s | dict2items | map(attribute='key') | reject('equalto', 'name') | list)
-        ) | list
+        secrets_summary | default([]) + [
+          [ item.name ] +
+          (item | dict2items
+                | rejectattr('key', 'equalto', 'name')
+                | map(attribute='key')
+                | list)
+        ]
       }}
+  loop: "{{ secrets }}"
+
+- name: Afficher le résultat
+  debug:
+    var: secrets_summary
+
 
 - name: Ensure Docker is installed
   apt:
@@ -25,7 +39,7 @@
 
 - name: Create Docker networks
   docker_network:
-    name: "{{ item }}"
+    name: "{{ project_name}}_{{ item }}"
     state: present
   loop: "{{ modules | map(attribute='networks') | flatten | unique }}"
   when: item is defined
@@ -41,30 +55,37 @@
     owner: root
     group: root
     mode: '0644'
+  when: modules_to_deploy | length > 0
 
 - name: Validate docker-compose.yml syntax
   command: docker-compose -f /opt/docker-compose.yml config
   register: compose_validation
   changed_when: false
   ignore_errors: true
+  when: modules_to_deploy | length > 0
 
 - name: Show validation errors if any
   debug:
     msg: "{{ compose_validation.stderr }}"
-  when: compose_validation.rc != 0
+  when: (modules_to_deploy | length > 0) and (compose_validation.rc != 0)
 
 - name: Fail if docker-compose.yml is invalid
   fail:
     msg: "docker-compose.yml validation failed, see previous error."
-  when: compose_validation.rc != 0
+  when: (modules_to_deploy | length > 0) and (compose_validation.rc != 0)
 
 - name: Deploy or restart modules with Docker Compose
   community.docker.docker_compose:
     project_src: /opt
     pull: yes
-    # project_name: "{{ project_name }}"
+    project_name: "{{ project_name }}"
     recreate: always
     scale: "{{ modules_to_deploy | items2dict(key_name='name', value_name='replicas') }}"
-  when: compose_validation.rc == 0
+  when: (modules_to_deploy | length > 0) and (compose_validation.rc == 0)
+
+- name: Aucun module installé
+  debug:
+    msg: "Aucun module n'est installé "
+  when: modules_to_deploy | length == 0
 
 
