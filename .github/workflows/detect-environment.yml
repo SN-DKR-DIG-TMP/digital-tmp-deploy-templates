@@ -25,12 +25,16 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           if [ "$IS_DISPATCH" = "true" ]; then
-            if [ -z "$ENV_DEPLOY" ]; then
+            if [ "$GITHUB_REF_NAME" = "develop" ]; then
+              echo "environment=dev" >> $GITHUB_OUTPUT
+              echo "Environnement forcé (develop): dev"
+            elif [ -n "$ENV_DEPLOY" ]; then
+              echo "environment=$ENV_DEPLOY" >> $GITHUB_OUTPUT
+              echo "Environnement déterminé manuellement: $ENV_DEPLOY"
+            else
               echo "environment=unknown" >> $GITHUB_OUTPUT
-              echo "::error::Paramètre manquant: env_deploy est requis pour workflow_dispatch"
+              echo "::error::Paramètre manquant: env_deploy est requis pour workflow_dispatch hors develop"
             fi
-            echo "environment=$ENV_DEPLOY" >> $GITHUB_OUTPUT
-            echo "Environnement déterminé (manuel): $ENV_DEPLOY"
           else
             if [ "$GITHUB_REF_NAME" = "develop" ]; then
               echo "environment=dev" >> $GITHUB_OUTPUT
