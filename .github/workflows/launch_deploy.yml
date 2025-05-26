@@ -252,3 +252,13 @@ jobs:
           --extra-vars "@module_secrets.yml" \
           --extra-vars "@resources.yml" \
           --extra-vars "github_username=${{ secrets.GITHUB_USERNAME }} github_owner=${{ env.DOCKER_OWNER }} github_token=${{ secrets.CUSTOM_GITHUB_TOKEN }} project_name=${{ inputs.PROJECT_NAME }} environment_deploy=${{ inputs.environment }} debug_mode=${{ inputs.debug_mode }}"
+
+  generate_pages:
+    needs: deploy
+    uses: ./.github/workflows/generate_deployment_page.yml
+    with:
+      resources_file_path: ${{ inputs.deployment_file_path }}
+      environment: ${{ inputs.environment }}
+    secrets:
+      GITHUB_USERNAME: ${{ secrets.GITHUB_USERNAME }}
+      CUSTOM_GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}

@@ -1,0 +1,113 @@
+name: Generate Deployment History Page
+
+on:
+  workflow_call:
+    inputs:
+      resources_file_path:
+        description: "Path des resources pour les containers des modules"
+        required: true
+        type: string
+      environment:
+        description: 'environment for deploy '
+        required: false
+        type: string
+        default: "unknown"
+
+    secrets:
+      CUSTOM_GITHUB_TOKEN:
+        description: 'GitHub token for authentication'
+        required: true
+      GITHUB_USERNAME:
+        description: 'GitHub username for authentication'
+        required: true
+
+jobs:
+  generate_html:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout target code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Getting all files
+        run: ls
+
+      # Checkout du repo appelant (du repo appelant)
+      - name: Checkout the repo calling the workflow
+        uses: actions/checkout@v3
+        with:
+          repository: 'SN-DKR-DIG-TMP/digital-tmp-deploy-templates'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: deploy-templates
+
+      - name: Getting all files ansible
+        run: ls deploy-templates/
+
+      - name: Get version from pom.xml
+        id: pom_version
+        run: |
+          VERSION=$(grep -m1 '<version>' pom.xml | sed -E 's/.*<version>([^<]+)<\/version>.*/\1/')
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Setup Python 3.x
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install -r deploy-templates/pages/scripts/requirements.txt
+
+      - name: Sauvegarder les fichiers nécessaires
+        run: |
+          mkdir temp
+          cp ${{ inputs.resources_file_path }} temp/deployment.yml
+          cp deploy-templates/pages/scripts/generate_html.py temp/
+          cp deploy-templates/pages/templates/deployment_history.html temp/
+
+      - name: Configurer Git
+        uses: SN-DKR-DIG-TMP/digital-tmp-workflow-actions/actions/config-git@main
+        with:
+          github_username: ${{ secrets.GITHUB_USERNAME }}
+          github_token: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+
+      - name: Créer branche gh-pages si elle n’existe pas
+        run: |
+          git fetch origin gh-pages || true
+          if git show-ref --quiet refs/remotes/origin/gh-pages; then
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+            echo "# Initial gh-pages" > README.md
+            git add README.md
+            git commit -m "Initial commit"
+            git push origin gh-pages
+          fi
+
+      - name: Copier et exécuter le script de génération
+        run: |
+          cp temp/* .
+          python3 generate_html.py \
+            --input deployment.yml \
+            --csv deployment.csv \
+            --output deployment.html \
+            --template deployment_history.html \
+            --env ${{ inputs.environment }} \
+            --branch ${{ github.ref_name }} \
+            --version ${{ env.VERSION }}
+
+      - name: contenu fichier deployment.csv
+        run: cat deployment.csv
+
+      - name: contenu fichier deployment.html
+        run: cat deployment.html
+
+      - name: Commit and push deployment files to gh-pages
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "Update deployment history HTML"
+          file_pattern: "deployment.csv deployment.html"
+          branch: gh-pages
+          commit_user_name: github-actions
+          commit_user_email: github-actions@github.com
