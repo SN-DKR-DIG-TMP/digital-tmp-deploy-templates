@@ -20,6 +20,9 @@ services:
 {% for key, value in module.environment.items() %}
       {{ key }}: "{{ value }}"
 {% endfor %}
+{% if module.command | default(false) %}
+    command: {{ module.command }}
+{% endif %}
 {% if module.volumes %}
     volumes:
 {% for volume in module.volumes %}
