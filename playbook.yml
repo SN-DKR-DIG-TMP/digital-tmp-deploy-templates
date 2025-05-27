@@ -7,5 +7,6 @@
     - role: extra_files
     - role: filter_modules
     - role: deploy
+    - role: keycloak_theme
     - role: nginx
       when: nginx_local.enabled | default(false)

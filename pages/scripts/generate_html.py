@@ -22,9 +22,10 @@ def load_deployments(yaml_path):
     with open(yaml_path, 'r') as f:
         data = yaml.safe_load(f)
         projects = data.get('projects', [])
-    return projects
+        keycloak_themes = data.get('keycloak_themes', [])
+    return projects, keycloak_themes
 
-def update_csv(csv_path, env, branch, version, projects):
+def update_csv(csv_path, env, branch, version, projects, keycloak_themes):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     new_lines = []
     for proj in projects:
@@ -32,6 +33,11 @@ def update_csv(csv_path, env, branch, version, projects):
         image = proj.get('image', '')
         img_version = image.split(':')[-1] if ':' in image else version
         new_lines.append([now, mod_name, img_version, env, branch, version])
+
+    for theme in keycloak_themes:
+        image = theme.get('image', '')
+        img_version = image.split(':')[-1] if ':' in image else version
+        new_lines.append([now, theme['name'], img_version, env, branch, version])
 
     existing_lines = []
     if os.path.exists(csv_path):
@@ -96,8 +102,8 @@ def build_env_histories(envs):
 
 def main():
     args = parse_args()
-    projects = load_deployments(args.input)
-    update_csv(args.csv, args.env, args.branch, args.version, projects)
+    projects, keycloak_themes = load_deployments(args.input)
+    update_csv(args.csv, args.env, args.branch, args.version, projects, keycloak_themes)
     rows = read_csv(args.csv)
     last_deployments = get_last_deployments_per_env(rows)
     all_deployments = get_deployments_grouped_by_env(rows)

@@ -16,10 +16,12 @@
         ]
       }}
   loop: "{{ secrets }}"
+  when: secrets is defined and secrets | length > 0
 
 - name: Afficher le résultat
   debug:
     var: secrets_summary
+  when: secrets is defined and secrets | length > 0
 
 
 - name: Ensure Docker is installed
@@ -47,6 +49,7 @@
 - name: Appliquer les secrets
   set_fact:
     modules_to_deploy: "{{ modules_to_deploy | inject_secrets(secrets) }}"
+  when: secrets is defined and secrets | length > 0
 
 - name: Generate docker-compose.yml from template
   template:

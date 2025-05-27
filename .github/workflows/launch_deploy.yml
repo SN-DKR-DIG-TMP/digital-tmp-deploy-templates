@@ -138,6 +138,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
   deploy:
+    if: inputs.environment != '' && inputs.environment != 'unknown'
     needs: prepare-matrix
     environment: ${{ inputs.environment }}
     env:
