@@ -3,80 +3,92 @@
 <head>
     <meta charset="UTF-8">
     <title>Historique des déploiements</title>
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
     <style>
         body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f7f9fc;
-            color: #2b2e3b;
-            padding: 40px;
+            font-family: 'Segoe UI', Roboto, sans-serif;
+            background-color: #fefefe;
+            color: #333;
+            padding: 40px 20px;
             max-width: 1200px;
             margin: auto;
         }
 
         h1, h2 {
-            color: #1f1f1f;
-            font-weight: 600;
-            margin-top: 40px;
-            border-bottom: 2px solid #e0e0e0;
-            padding-bottom: 8px;
+            color: #2c3e50;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+            margin-top: 60px;
+        }
+
+        .search-bar {
+            margin: 20px 0 10px 0;
+            text-align: right;
+        }
+
+        .search-bar input {
+            padding: 8px 12px;
+            width: 100%;
+            max-width: 200px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+        }
+
+        .pagination {
+            text-align: right;
+            margin: 10px 0 30px 0;
+        }
+
+        .pagination button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            margin: 0 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .pagination button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
         }
 
         table {
             border-collapse: collapse;
-            width: 100%;
-            margin: 30px 0;
+            width: 90%;
+            margin: 0 auto 20px auto;
             background-color: white;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
         }
 
         th {
-            background-color: #f1f3f5;
+            background-color: #f2f2f2;
             font-weight: 600;
-            color: #333;
         }
 
         th, td {
-            padding: 14px 16px;
-            border-bottom: 1px solid #eaeaea;
+            padding: 10px 12px;
+            border: 1px solid #eaeaea;
             text-align: left;
             font-size: 14px;
         }
 
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
         tr:hover {
-            background-color: #f9fcff;
-        }
-
-        .env-title {
-            margin-top: 60px;
-        }
-
-        .dataTables_wrapper .dataTables_paginate .paginate_button {
-            padding: 6px 12px;
-            border-radius: 4px;
-            margin: 0 2px;
-            background: #eaeff3;
-            border: none;
-            color: #333 !important;
-            font-weight: 500;
-        }
-
-        .dataTables_wrapper .dataTables_paginate .paginate_button.current {
-            background: #3f83f8 !important;
-            color: white !important;
+            background-color: #f1f7ff;
         }
 
         @media (max-width: 768px) {
-            body {
-                padding: 20px;
-            }
-
             table, thead, tbody, th, td, tr {
                 font-size: 12px;
+            }
+
+            .search-bar input {
+                width: 60%;
             }
         }
     </style>
@@ -85,7 +97,11 @@
 
 <h1>Résumé des derniers déploiements par environnement</h1>
 
-<table class="datatable">
+<div class="search-bar">
+    <input type="text" id="searchInput" placeholder="Rechercher...">
+</div>
+
+<table id="summaryTable" class="paginated-table">
     <thead>
     <tr>
         <th>Composant</th>
@@ -112,9 +128,14 @@
     </tbody>
 </table>
 
+<div class="pagination" data-table-id="summaryTable">
+    <button class="prevBtn">Précédent</button>
+    <button class="nextBtn">Suivant</button>
+</div>
+
 {% for env, deployments in all_deployments.items() %}
-<h2 class="env-title">Historique des déploiements pour {{ env }}</h2>
-<table class="datatable">
+<h2>Historique des déploiements pour {{ env }}</h2>
+<table class="paginated-table" id="table-{{ loop.index }}">
     <thead>
     <tr>
         <th>Date de livraison</th>
@@ -142,28 +163,98 @@
     {% endfor %}
     </tbody>
 </table>
+<div class="pagination" data-table-id="table-{{ loop.index }}">
+    <button class="prevBtn">Précédent</button>
+    <button class="nextBtn">Suivant</button>
+</div>
 {% endfor %}
 
-<!-- jQuery et DataTables -->
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
 <script>
-    $(document).ready(function () {
-        $('.datatable').DataTable({
-            paging: true,
-            pageLength: 10,
-            lengthChange: false,
-            ordering: true,
-            info: false,
-            language: {
-                paginate: {
-                    previous: "Précédent",
-                    next: "Suivant"
-                },
-                search: "Recherche :"
+    const rowsPerPage = 10;
+    const searchInput = document.getElementById('searchInput');
+
+    // Fonction qui gère la pagination pour une table donnée
+    function setupPagination(table, paginationDiv) {
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        let currentPage = 1;
+
+        function showPage(page) {
+            const start = (page - 1) * rowsPerPage;
+            const end = start + rowsPerPage;
+            rows.forEach((row, i) => {
+                row.style.display = (i >= start && i < end) ? '' : 'none';
+            });
+            prevBtn.disabled = page === 1;
+            nextBtn.disabled = end >= rows.length;
+        }
+
+        // Créer et gérer boutons pagination
+        const prevBtn = paginationDiv.querySelector('.prevBtn');
+        const nextBtn = paginationDiv.querySelector('.nextBtn');
+
+        prevBtn.addEventListener('click', () => {
+            if (currentPage > 1) {
+                currentPage--;
+                showPage(currentPage);
             }
         });
+
+        nextBtn.addEventListener('click', () => {
+            if ((currentPage * rowsPerPage) < rows.length) {
+                currentPage++;
+                showPage(currentPage);
+            }
+        });
+
+        showPage(currentPage);
+
+        // Retourne une fonction pour filtrer la table
+        return function(filter) {
+            let visibleCount = 0;
+            rows.forEach(row => {
+                const text = row.querySelector('td')?.textContent.toLowerCase() || '';
+                const match = text.includes(filter.toLowerCase());
+                row.style.display = match ? '' : 'none';
+                if (match) visibleCount++;
+            });
+            // Reset pagination if filter applied
+            if (filter.length > 0) {
+                prevBtn.style.display = 'none';
+                nextBtn.style.display = 'none';
+            } else {
+                prevBtn.style.display = '';
+                nextBtn.style.display = '';
+                currentPage = 1;
+                showPage(currentPage);
+            }
+        }
+    }
+
+    // Setup pagination pour chaque table avec pagination
+    const paginatedTables = document.querySelectorAll('.paginated-table');
+    const filters = [];
+
+    paginatedTables.forEach(table => {
+        const tableId = table.id;
+        // Trouver la div pagination liée (via data-table-id)
+        const paginationDiv = document.querySelector(`.pagination[data-table-id="${tableId}"]`);
+        if (!paginationDiv) return;
+
+        // Setup pagination & récupère la fonction de filtre
+        const filterFn = setupPagination(table, paginationDiv);
+        filters.push({table, filterFn});
     });
+
+    // Search bar global, filtre toutes les tables
+    searchInput.addEventListener('keyup', () => {
+        const filter = searchInput.value;
+        filters.forEach(({table, filterFn}) => {
+            filterFn(filter);
+        });
+    });
+
 </script>
+
 </body>
 </html>

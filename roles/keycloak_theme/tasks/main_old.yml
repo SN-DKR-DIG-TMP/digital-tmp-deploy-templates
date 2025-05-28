@@ -1,0 +1,98 @@
+---
+- name: Pull des images de thèmes
+  community.docker.docker_image:
+    name: "{{ item.image }}"
+    source: pull
+  loop: "{{ keycloak_themes }}"
+
+- name: Créer le dossier du thème s’il n'existe pas
+  file:
+    path: /{{ project_name }}/keycloak/themes
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: "{{ keycloak_themes | subelements('themes') }}"
+  when: keycloak_themes is defined and keycloak_themes | length > 0
+
+- name: Lancer conteneur temporaire du thème
+  docker_container:
+    name: "theme-temp-{{ item.name }}"
+    image: "{{ item.image }}"
+    state: started
+    command: sleep 300
+  loop: "{{ keycloak_themes }}"
+  when: keycloak_themes is defined and keycloak_themes | length > 0
+
+- name: Copier chaque thème dans le répertoire partagé
+  command: >
+    docker cp theme-temp-{{ item.0.name }}:/opt/keycloak/themes/{{ item.1 }}
+    /{{ project_name }}/keycloak/themes/
+  loop: "{{ keycloak_themes | subelements('themes') }}"
+  when: keycloak_themes is defined and keycloak_themes | length > 0
+
+- name: Supprimer les conteneurs temporaires
+  docker_container:
+    name: "theme-temp-{{ item.name }}"
+    state: absent
+    force_kill: true
+  loop: "{{ keycloak_themes }}"
+  when: keycloak_themes is defined and keycloak_themes | length > 0
+
+- name: Extraire les services Keycloak à redémarrer (uniques)
+  set_fact:
+    keycloak_services_to_restart: "{{ keycloak_themes | map(attribute='keycloak_service_name') | unique }}"
+  when: keycloak_themes is defined and keycloak_themes | length > 0
+
+- name: Extraire les modules Keycloak
+  set_fact:
+    keycloak_modules: "{{ keycloak_modules | default([]) + (modules | selectattr('name', 'search', item.keycloak_service_name) | list) }}"
+  loop: "{{ keycloak_themes }}"
+  loop_control:
+    label: "{{ item.keycloak_service_name }}"
+  when: keycloak_themes is defined and keycloak_themes | length > 0
+
+- name: Appliquer les secrets keycloak
+  set_fact:
+    keycloak_modules: "{{ keycloak_modules | inject_secrets(secrets) }}"
+  when: secrets is defined and secrets | length > 0 and keycloak_modules | length > 0
+
+- name: Generate docker-compose.yml from template keycloak
+  template:
+    src: templates/docker-compose.j2
+    dest: /opt/docker-compose.yml
+    owner: root
+    group: root
+    mode: '0644'
+  when: keycloak_modules | length > 0
+
+- name: Validate docker-compose.yml syntax keycloak
+  command: docker-compose -f /opt/docker-compose.yml config
+  register: compose_validation
+  changed_when: false
+  ignore_errors: true
+  when: keycloak_modules | length > 0
+
+- name: Show validation errors if any keycloak
+  debug:
+    msg: "{{ compose_validation.stderr }}"
+  when: (keycloak_modules | length > 0) and (compose_validation.rc != 0) and (keycloak_modules | length > 0)
+
+- name: Fail if docker-compose.yml keycloak is invalid
+  fail:
+    msg: "docker-compose.yml validation failed, see previous error."
+  when: (keycloak_modules | length > 0) and (compose_validation.rc != 0) and (keycloak_modules | length > 0)
+
+- name: Deploy or restart modules keycloak with Docker Compose
+  community.docker.docker_compose:
+    project_src: /opt
+    pull: yes
+    project_name: "{{ project_name }}"
+    recreate: always
+    scale: "{{ keycloak_modules | items2dict(key_name='name', value_name='replicas') }}"
+  when: (keycloak_modules | length > 0) and (compose_validation.rc == 0) and (keycloak_modules | length > 0)
+
+- name: Afficher les modules Keycloak
+  debug:
+    var: keycloak_modules
+  when: keycloak_modules is defined
