@@ -34,7 +34,7 @@
   when: item.files | length > 0
   tags: nginx_cleanup
 
-- name: Generate Nginx configuration for each module
+- name: Generate Nginx configuration for each module debian
   template:
     src: templates/nginx.conf.j2
     dest: /etc/nginx/sites-available/digital_tmp_{{ item.name }}.conf
@@ -42,8 +42,20 @@
     group: root
     mode: '0644'
   loop: "{{ modules_to_deploy }}"
-  when: modules_to_deploy | length > 0
+  when: modules_to_deploy | length > 0 and ansible_distribution | lower == "debian"
   no_log: true
+
+- name: Generate Nginx configuration for each module ubuntu
+  template:
+    src: templates/nginx-v2.conf.j2
+    dest: /etc/nginx/sites-available/digital_tmp_{{ item.name }}.conf
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ modules_to_deploy }}"
+  when: modules_to_deploy | length > 0 and ansible_distribution | lower == "ubuntu"
+  no_log: true
+
 
 - name: Show module details being processed
   debug:

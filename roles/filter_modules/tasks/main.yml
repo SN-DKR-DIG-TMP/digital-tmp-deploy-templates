@@ -12,13 +12,23 @@
   debug:
     msg: "{{ modules | map(attribute='name') | list | zip(modules | map(attribute='image') | list) | map('join', ' ➜ ') | list }}"
 
-- name: Get current container versions
+- name: Get current container versions ubuntu
+  community.docker.docker_container_info:
+    name: "{{ project_name }}-{{ item.name }}-1"
+  register: container_versions
+  loop: "{{ modules }}"
+  #when: debug_mode | bool
+  no_log: "{{ not debug_mode | bool }}"
+  when: ansible_distribution | lower == "ubuntu"
+
+- name: Get current container versions debian
   community.docker.docker_container_info:
     name: "{{ project_name }}_{{ item.name }}_1"
   register: container_versions
   loop: "{{ modules }}"
   #when: debug_mode | bool
   no_log: "{{ not debug_mode | bool }}"
+  when: ansible_distribution | lower == "debian"
 
 - name: Debug du nom et de l'image de chaque conteneur
   debug:
