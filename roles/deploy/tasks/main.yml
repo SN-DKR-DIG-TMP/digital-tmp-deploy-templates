@@ -23,15 +23,6 @@
     var: secrets_summary
   when: secrets is defined and secrets | length > 0
 
-
-- name: Ensure Docker is installed
-  apt:
-    name:
-      - docker.io
-      - docker-compose
-    state: present
-    update_cache: yes
-
 # Connexion au GitHub Container Registry
 - name: Log in to GitHub Container Registry
   docker_login:
@@ -65,7 +56,14 @@
   register: compose_validation
   changed_when: false
   ignore_errors: true
-  when: modules_to_deploy | length > 0
+  when: modules_to_deploy | length > 0  and (ansible_distribution | lower == "debian")
+
+- name: Validate docker-compose.yml syntax
+  command: docker compose -f /opt/docker-compose.yml config
+  register: compose_validation
+  changed_when: false
+  ignore_errors: true
+  when: modules_to_deploy | length > 0  and (ansible_distribution | lower == "ubuntu")
 
 - name: Show validation errors if any
   debug:
@@ -77,6 +75,23 @@
     msg: "docker-compose.yml validation failed, see previous error."
   when: (modules_to_deploy | length > 0) and (compose_validation.rc != 0)
 
+- name: Build docker compose up command
+  set_fact:
+    compose_up_cmd: >-
+      docker compose -f /opt/docker-compose.yml --project-name {{ project_name }} pull &&
+      docker compose -f /opt/docker-compose.yml --project-name {{ project_name }} up -d --force-recreate
+      {% for module in modules_to_deploy %}
+        --scale {{ module.name }}={{ module.replicas }}
+      {% endfor %}
+  when: ansible_distribution | lower == "ubuntu"
+
+- name: Deploy or restart modules with Docker Compose v2 CLI
+  ansible.builtin.shell: "{{ compose_up_cmd }}"
+  args:
+    chdir: /opt
+  when: (modules_to_deploy | length > 0) and (compose_validation.rc == 0) and (ansible_distribution | lower == "ubuntu")
+
+
 - name: Deploy or restart modules with Docker Compose
   community.docker.docker_compose:
     project_src: /opt
@@ -84,7 +99,7 @@
     project_name: "{{ project_name }}"
     recreate: always
     scale: "{{ modules_to_deploy | items2dict(key_name='name', value_name='replicas') }}"
-  when: (modules_to_deploy | length > 0) and (compose_validation.rc == 0)
+  when: (modules_to_deploy | length > 0) and (compose_validation.rc == 0) and (ansible_distribution | lower == "debian")
 
 - name: Aucun module installé
   debug:
