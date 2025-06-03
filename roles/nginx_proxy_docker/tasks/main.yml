@@ -1,0 +1,122 @@
+- name: Ensure nginx is NOT installed on the host to avoid conflicts
+  ansible.builtin.apt:
+    name: nginx
+    state: absent
+    purge: yes
+    autoremove: yes
+  become: true
+
+- name: Create necessary directories for nginx docker setup
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /opt/docker
+    - /opt/docker/nginx
+    - /opt/docker/nginx/sites-enabled
+    - /opt/docker/nginx/html
+    - /opt/docker/nginx/certs
+    - /opt/docker/nginx/sites-available
+    - /opt/docker/nginx/html/.well-known
+    - /opt/docker/nginx/html/.well-known/acme-challenge
+
+- name: Create test challenge file
+  ansible.builtin.copy:
+    content: "ok"
+    dest: /opt/docker/nginx/html/.well-known/acme-challenge/test.txt
+    mode: '0644'
+  become: true
+
+
+- name: Generate docker-compose nginx file
+  ansible.builtin.template:
+    src: docker-compose-nginx.yml.j2
+    dest: /opt/docker/docker-compose-nginx.yml
+    mode: '0644'
+  become: true
+
+- name: Generate HTTP-only nginx configs
+  template:
+    src: nginx-site-http.conf.j2
+    dest: "/opt/docker/nginx/sites-available/digital_tmp_{{ item.name }}.conf"
+    mode: '0644'
+  loop: "{{ modules_to_deploy }}"
+  become: true
+  when: item.server_name is defined and item.server_name
+
+- name: Enable sites (symlinks HTTP)
+  file:
+    src: "../sites-available/digital_tmp_{{ item.name }}.conf"
+    dest: "/opt/docker/nginx/sites-enabled/digital_tmp_{{ item.name }}.conf"
+    state: link
+  loop: "{{ modules_to_deploy }}"
+  when: item.server_name is defined and item.server_name
+  become: true
+
+
+- name: Launch nginx docker-compose stack
+  ansible.builtin.shell:
+    cmd: docker compose -f /opt/docker/docker-compose-nginx.yml up -d
+  args:
+    chdir: /opt/docker
+  register: nginx_up
+  changed_when: "'Starting' in nginx_up.stdout or 'Creating' in nginx_up.stdout or 'done' in nginx_up.stdout"
+  become: true
+
+- name: Wait for NGINX to be available on port 80
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 80
+    delay: 3
+    timeout: 30
+    state: started
+  become: true
+
+- name: Generate certbot scripts
+  template:
+    src: certbot.sh.j2
+    dest: "/tmp/certbot_{{ item.name }}.sh"
+    mode: '0755'
+  loop: "{{ modules_to_deploy }}"
+  when: item.ssl_enabled | default(false)  and item.server_name is defined and item.server_name
+  become: true
+
+- name: Run certbot
+  shell: "/tmp/certbot_{{ item.name }}.sh"
+  loop: "{{ modules_to_deploy }}"
+  when: item.ssl_enabled | default(false)  and item.server_name is defined and item.server_name
+  become: true
+
+- name: Replace with SSL nginx configs
+  template:
+    src: nginx-site-ssl.conf.j2
+    dest: "/opt/docker/nginx/sites-available/digital_tmp_{{ item.name }}.conf"
+    mode: '0644'
+  loop: "{{ modules_to_deploy }}"
+  when: item.ssl_enabled | default(false)  and item.server_name is defined and item.server_name
+  become: true
+
+- name: Setup certbot renewal cron
+  cron:
+    name: "Renew Let's Encrypt certificates"
+    job: >
+      docker run --rm
+      -v /opt/docker/nginx/html:/var/www/html
+      -v /opt/docker/nginx/certs:/etc/letsencrypt
+      certbot/certbot renew --webroot --webroot-path=/var/www/html --quiet &&
+      docker exec nginx_reverse_proxy nginx -s reload
+    user: root
+    minute: 0
+    hour: 3
+  become: true
+
+- name: Reload nginx
+  shell: docker exec nginx_reverse_proxy nginx -s reload
+  become: true
+  register: reload_result
+  failed_when: reload_result.rc != 0
+  ignore_errors: false
+

@@ -1,19 +1,20 @@
-# Configuration pour un module spécifique
-
 {% set container_name = project_name + '-' + item.name %}
+
+# HTTP only (no SSL)
 upstream {{ container_name }} {
-    {% for replica in range(0, item.replicas) %}
-    server 127.0.0.1:{{ item.external_port + replica }};
-    {% endfor %}
+    server {{ item.name }}:{{ item.internal_port }};
 }
 
 server {
-
     listen 80;
-
     {% if item.server_name is defined %}
     server_name {{ item.server_name }};
     {% endif %}
+
+    location /.well-known/acme-challenge/ {
+            root /var/www/html;
+            try_files $uri =404;
+        }
 
     location / {
         proxy_pass http://{{ container_name }};
@@ -22,5 +23,4 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
-
 }

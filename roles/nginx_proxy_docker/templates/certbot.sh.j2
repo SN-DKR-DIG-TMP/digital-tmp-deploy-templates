@@ -1,0 +1,36 @@
+#!/bin/bash
+set -euo pipefail
+
+DOMAIN="{{ item.server_name }}"
+EMAIL="khoutechdev@gmail.com"
+WEBROOT="/var/www/html"
+CERT_PATH="/opt/docker/nginx/certs/live/$DOMAIN"
+
+echo "=== Starting Certbot for $DOMAIN ==="
+
+if [ -d "$CERT_PATH" ]; then
+  echo " Certificate already exists for $DOMAIN, skipping."
+  exit 0
+fi
+
+docker run --rm \
+  -v /opt/docker/nginx/html:$WEBROOT \
+  -v /opt/docker/nginx/certs:/etc/letsencrypt \
+  certbot/certbot certonly \
+  --webroot --webroot-path=$WEBROOT \
+  --non-interactive --agree-tos \
+  --email $EMAIL \
+  -d $DOMAIN
+
+docker run --rm  \
+  -v /opt/docker/nginx/html:$WEBROOT \
+  -v /opt/docker/nginx/certs:/etc/letsencrypt  \
+    certbot/certbot certonly  \
+    --webroot --webroot-path=$WEBROOT \
+    --non-interactive --agree-tos
+    --email $EMAIL
+    -d $DOMAIN
+
+    docker run --rm   -v /opt/docker/nginx/html:/var/www/html   -v /opt/docker/nginx/certs:/etc/letsencrypt   certbot/certbot certonly   --webroot --webroot-path=/var/www/html   --non-interactive --agree-tos   --email khoutechdev@gmail.com   -d test-portainer.digital-app.net
+
+echo " Certificate obtained for $DOMAIN"

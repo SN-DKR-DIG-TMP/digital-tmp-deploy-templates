@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:stable-alpine
+    container_name: nginx_reverse_proxy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/docker/nginx/sites-enabled:/etc/nginx/conf.d:ro
+      - /opt/docker/nginx/html:/var/www/html:ro
+      - /opt/docker/nginx/certs:/etc/letsencrypt:ro
+      - /opt/docker/nginx/sites-available:/etc/nginx/sites-available:ro
+    networks:
+{% for network in network_values %}
+      - {{ project_name}}_{{ network }}
+{% endfor %}
+
+{% if network_values %}
+networks:
+{% for network in network_values %}
+  {{ project_name}}_{{ network }}:
+    driver: bridge
+    external: true
+{% endfor %}
+{% endif %}

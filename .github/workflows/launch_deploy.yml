@@ -248,7 +248,7 @@ jobs:
           else
             VERBOSE=""
           fi
-          ansible-playbook -i inventory/inventory.ini deploy-templates/playbook.yml $VERBOSE  \
+          ansible-playbook -i inventory/inventory.ini deploy-templates/playbook.yml -vvv  \
           --extra-vars "@deployment.yml" \
           --extra-vars "@module_secrets.yml" \
           --extra-vars "@resources.yml" \
