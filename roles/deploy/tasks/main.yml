@@ -1,4 +1,14 @@
 ---
+- name: Check if Docker Swarm is active
+  command: docker info --format '{{"{{.Swarm.LocalNodeState}}"}}'
+  register: swarm_state
+  changed_when: false
+  ignore_errors: false
+
+- name: Initialize Docker Swarm only if not active
+  command: docker swarm init --advertise-addr {{ swarm_advertise_addr | default(omit) }}
+  when: swarm_state.stdout != "active"
+
 - name: Initialiser la liste transformée
   set_fact:
     secrets_summary: []
@@ -30,12 +40,28 @@
     username: "{{ github_username }}"
     password: "{{ github_token }}"
 
-- name: Create Docker networks
-  docker_network:
-    name: "{{ project_name}}_{{ item }}"
+- name: Récupérer la liste de tous les réseaux nécessaires
+  set_fact:
+    required_networks: "{{ modules | map(attribute='networks') | flatten | select('defined') | unique | list }}"
+
+- name: Vérifier l'existence des réseaux
+  community.docker.docker_network_info:
+    name: "{{ project_name }}_{{ item }}"
+  loop: "{{ required_networks }}"
+  register: network_checks
+  ignore_errors: yes  # Permet de continuer si un réseau n'existe pas
+
+- name: Créer les réseaux manquants
+  community.docker.docker_network:
+    name: "{{ project_name }}_{{ item.item }}"
+    driver: overlay
+    scope: swarm
+    attachable: true
     state: present
-  loop: "{{ modules | map(attribute='networks') | flatten | unique }}"
-  when: item is defined
+  loop: "{{ network_checks.results }}"
+  when: item.failed or not item.exists
+  notify:
+    - Attendre la stabilisation du réseau
 
 - name: Appliquer les secrets
   set_fact:
@@ -43,18 +69,13 @@
   when: secrets is defined and secrets | length > 0
 
 - name: Configurer docker v1
-  ansible.builtin.include_tasks: docker_v1.yml
+  ansible.builtin.include_tasks: docker.yml
   tags: docker
-  when: ansible_distribution | lower == "debian"
-
-- name: Configurer docker v2
-  ansible.builtin.include_tasks: docker_v2.yml
-  tags: docker
-  when: ansible_distribution | lower == "ubuntu"
 
 - name: Aucun module installé
   debug:
     msg: "Aucun module n'est installé "
   when: modules_to_deploy | length == 0
+
 
 
