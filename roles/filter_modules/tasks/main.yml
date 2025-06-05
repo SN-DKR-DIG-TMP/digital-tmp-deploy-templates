@@ -12,71 +12,77 @@
   debug:
     msg: "{{ modules | map(attribute='name') | list | zip(modules | map(attribute='image') | list) | map('join', ' ➜ ') | list }}"
 
-- name: Get current container versions ubuntu
-  community.docker.docker_container_info:
-    name: "{{ project_name }}-{{ item.name }}-1"
-  register: container_versions
+- name: Get current service versions in Swarm
+  community.docker.docker_swarm_service_info:
+    name: "{{ project_name }}_{{ item.name }}"
+  register: all_services
   loop: "{{ modules }}"
-  #when: debug_mode | bool
-  no_log: "{{ not debug_mode | bool }}"
-  when: ansible_distribution | lower == "ubuntu"
 
-- name: Get current container versions debian
-  community.docker.docker_container_info:
-    name: "{{ project_name }}_{{ item.name }}_1"
-  register: container_versions
-  loop: "{{ modules }}"
-  #when: debug_mode | bool
-  no_log: "{{ not debug_mode | bool }}"
-  when: ansible_distribution | lower == "debian"
-
-- name: Debug du nom et de l'image de chaque conteneur
+- name: Afficher les services
   debug:
-    msg: "{{ item.item.name }} => {{ item.container.Config.Image if item.container is defined else 'container info missing' }}"
-  loop: "{{ container_versions.results | rejectattr('container', 'none') | list }}"
-  when: not debug_mode | bool
+    var: all_services
+
+- name: Filtrer les services du stack "{{ project_name }}"
+  set_fact:
+    stack_services: >-
+      {{
+        all_services.results
+        | selectattr('service', 'defined')
+        | selectattr('service', '!=', none)
+        | selectattr('service.Spec.Name', 'search', '^' ~ project_name ~ '_')
+        | map(attribute='service')
+        | list
+      }}
+
+- name: Afficher les services du stack avec leur image
+  debug:
+    msg: >-
+      {{
+        stack_services
+        | selectattr('Spec.TaskTemplate.ContainerSpec.Image', 'defined')
+        | map('extract', ['Spec'])
+        | map('extract', ['TaskTemplate'])
+        | map('extract', ['ContainerSpec'])
+        | map('extract', ['Image'])
+        | zip(stack_services | map(attribute='Spec') | map(attribute='Name'))
+        | map('reverse')
+        | map('join', ' ➜ ')
+        | list
+      }}
 
 
-- name: Extraire la liste des images des containers
+- name: Extraire la liste des images utilisées par les services du stack
   set_fact:
     container_images_list: >-
       {{
-        container_versions.results
-        | selectattr('container.Config', 'defined')
-        | selectattr('container.Config.Image', 'defined')
-        | map(attribute='container.Config.Image')
+        stack_services
+        | selectattr('Spec.TaskTemplate.ContainerSpec.Image', 'defined')
+        | map(attribute='Spec')
+        | map(attribute='TaskTemplate')
+        | map(attribute='ContainerSpec')
+        | map(attribute='Image')
         | list
       }}
 
-- name: Afficher container_images_list
+- name: Afficher container_images_list (images utilisées par les services du stack)
   debug:
     msg: "{{ container_images_list }}"
 
-- name: Afficher les modules à déployer (nom et image)
+- name: Afficher les modules à déployer (nouvelle image)
   debug:
-    msg: >-
-      {{
-        modules
-        | rejectattr('image', 'in', container_images_list)
-        | map(attribute='name')
-        | zip(
-            modules
-            | rejectattr('image', 'in', container_images_list)
-            | map(attribute='image')
-          )
-        | map('join', ' => ')
-        | list
-      }}
+    msg: |
+      Modules à déployer (nouvelle image) :
+      {% for mod in modules | rejectattr('image', 'in', container_images_list) %}
+      - {{ mod.name }} => {{ mod.image }}
+      {% endfor %}
 
 - name: Afficher les noms des modules à redémarrer de force
   debug:
-    msg: >-
-      {{
-        modules
-        | selectattr('force_restart', 'equalto', true)
-        | map(attribute='name')
-        | list
-      }}
+    msg: |
+      Modules à redémarrer de force :
+      {% for mod in modules | selectattr('force_restart', 'defined') | selectattr('force_restart', 'equalto', true) %}
+      - {{ mod.name }}
+      {% endfor %}
 
 
 - name: Filtrer les modules à installer ou redémarrer (sans doublons)
@@ -85,8 +91,8 @@
       {{
         (
           modules | rejectattr('image', 'in', container_images_list)
-                  + 
-          modules | selectattr('force_restart', 'equalto', true)
+          + 
+          modules | selectattr('force_restart', 'defined') | selectattr('force_restart', 'equalto', true)
         ) | unique(attribute='name') | list
       }}
 

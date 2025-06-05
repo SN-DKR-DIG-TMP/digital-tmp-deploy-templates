@@ -2,8 +2,12 @@
 on:
   workflow_call:
     inputs:
-      env_deploy:
-        description: "Environnement demandé (manuellement)"
+      deploy_release:
+        description: "Environnement release demandé (manuellement)"
+        required: false
+        type: string
+      deploy_dev:
+        description: "Environnement develop demandé (manuellement)"
         required: false
         type: string
     outputs:
@@ -21,24 +25,34 @@ jobs:
         id: setenv
         env:
           IS_DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
-          ENV_DEPLOY: ${{ inputs.env_deploy || '' }}
+          ENV_DEV: ${{ inputs.deploy_dev || '' }}
+          ENV_RELEASE: ${{ inputs.deploy_release || '' }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           if [ "$IS_DISPATCH" = "true" ]; then
             if [ "$GITHUB_REF_NAME" = "develop" ]; then
-              echo "environment=dev" >> $GITHUB_OUTPUT
-              echo "Environnement forcé (develop): dev"
-            elif [ -n "$ENV_DEPLOY" ]; then
-              echo "environment=$ENV_DEPLOY" >> $GITHUB_OUTPUT
-              echo "Environnement déterminé manuellement: $ENV_DEPLOY"
+              if [ -n "$ENV_DEV" ]; then
+                echo "environment=$ENV_DEV" >> $GITHUB_OUTPUT
+                echo "Environnement déterminé manuellement: $ENV_DEV"
+              else
+                echo "environment=unknown" >> $GITHUB_OUTPUT
+              fi
+            elif [ -n "$ENV_RELEASE" ]; then
+              echo "environment=$ENV_RELEASE" >> $GITHUB_OUTPUT
+              echo "Environnement déterminé manuellement: $ENV_RELEASE"
             else
               echo "environment=unknown" >> $GITHUB_OUTPUT
               echo "::error::Paramètre manquant: env_deploy est requis pour workflow_dispatch hors develop"
             fi
           else
             if [ "$GITHUB_REF_NAME" = "develop" ]; then
-              echo "environment=dev" >> $GITHUB_OUTPUT
-              echo "Environnement déterminé (develop): dev"
+              if [ -n "$ENV_DEV" ]; then
+                echo "environment=$ENV_DEV" >> $GITHUB_OUTPUT
+                echo "Environnement déterminé manuellement: $ENV_DEV"
+              else
+                echo "environment=dev" >> $GITHUB_OUTPUT
+                echo "Environnement déterminé (develop): dev"
+              fi
             else
               echo "environment=unknown" >> $GITHUB_OUTPUT
               echo "::error::Environnement inconnu pour la branche: $GITHUB_REF_NAME"
