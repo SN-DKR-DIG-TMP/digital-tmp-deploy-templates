@@ -1,0 +1,22 @@
+---
+
+- name: Fusionner les modules à redémarrer (sans doublons)
+  set_fact:
+    all_modules_to_force: >-
+      {{
+        (modules_to_deploy + (keycloak_modules | default([])))
+        | unique(attribute='name')
+        | list
+      }}
+
+- name: Forcer la recréation des containers des services à déployer
+  shell: docker service update --force {{ project_name }}_{{ item.name }}
+  async: 60
+  poll: 0
+  loop: "{{ all_modules_to_force }}"
+  when: all_modules_to_force | length > 0
+  
+- name: Forcer le redémarrage du service Docker Swarm
+  ansible.builtin.shell: docker service update --force traefik_traefik
+  become: true
+  when: modules_to_deploy | length > 0
