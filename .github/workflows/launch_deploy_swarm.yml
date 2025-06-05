@@ -1,0 +1,266 @@
+name: Deploy Modules with Ansible and Docker Container
+
+on:
+  workflow_call:
+    inputs:
+      deployment_file_path:
+        description: "Path to the deployment YAML file"
+        required: true
+        type: string
+      resources_file_path:
+        description: "Path des resources pour les containers des modules"
+        required: true
+        type: string
+      DOCKER_OWNER:
+        description: 'Docker image owner'
+        required: false
+        type: string
+      PROJECT_NAME:
+        description: 'Project name'
+        required: true
+        type: string
+      PRODUCT_RELEASE_VERSION:
+        description: Version du projet à releaser
+        required: false
+        type: string
+        default: ""
+      deploy:
+        description: Lancer le déploiement pour le lancement manuel du job
+        required: false
+        default: false
+        type: boolean
+      debug_mode:
+        description: Activation mode debug
+        required: false
+        default: false
+        type: boolean
+      released:
+        description: Indiquer si la release doit etre lancer
+        required: false
+        default: false
+        type: boolean
+      strict_release:
+        description: Spécifier si on doit modifier modifier les versions snapshot des images en générant la release
+        required: false
+        default: false
+        type: boolean
+      environment:
+        description: 'environment for deploy '
+        required: false
+        type: string
+        default: "unknown"
+      workflow_file:
+        description: 'Nom du fichier du workflow'
+        required: false
+        default: 'build.yml'
+        type: string
+      environment_approved:
+        description: 'environment for manual approved '
+        required: false
+        type: string
+        default: "manual-approval"
+    secrets:
+      CUSTOM_GITHUB_TOKEN:
+        description: 'GitHub token for authentication'
+        required: true
+      GITHUB_USERNAME:
+        description: 'GitHub username for authentication'
+        required: true
+      MAVEN_PAT:
+        description: 'GitHub MAVEN_PAT'
+        required: true
+      SSH_PRIVATE_KEY:
+        description: 'Private key for env'
+        required: true
+      MODULE_SECRETS:
+        description: "Les variables d'environnements des modules"
+        required: true
+
+jobs:
+
+  call-build:
+    name: build
+    uses: SN-DKR-DIG-TMP/digital-tmp-workflow-templates/.github/workflows/template-deploy-global.yml@main
+    with:
+      workflow_file: ${{ inputs.workflow_file }}
+      environment_approved: ${{ inputs.environment_approved }}
+      released: ${{ inputs.released }}
+      PRODUCT_RELEASE_VERSION: ${{ inputs.PRODUCT_RELEASE_VERSION }}
+      project_deployment_file_path: ${{ inputs.strict_release && inputs.deployment_file_path || '' }}
+    secrets:
+      GITHUB_USERNAME: ${{ secrets.GITHUB_USERNAME }}
+      CUSTOM_GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+
+  prepare-matrix:
+    env:
+      IS_DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
+      ENV_DEPLOY: ${{ inputs.env_deploy || '' }}
+      GITHUB_REF_NAME: ${{ github.ref_name }}
+    if: |
+      inputs.environment != '' && inputs.environment != 'unknown' &&
+      (
+        (
+          github.ref == 'refs/heads/develop' && 
+          github.event_name == 'push'
+        ) ||
+        (
+          github.event_name == 'workflow_dispatch' && inputs.deploy && 
+          (
+            startsWith(github.ref, 'refs/heads/release/') ||
+            github.ref == 'refs/heads/develop'
+          )
+        )
+      )
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs: call-build
+    outputs:
+      matrix: ${{ steps.set.outputs.servers }}
+      detect_env: ${{ inputs.environment }}
+    steps:
+
+      - name: Afficher l'environnement'
+        run: echo "Déploiement su l'environnement ${{ inputs.environment }}"
+
+      - name: Afficher le serveur
+        run: echo "Servers ${{ vars.servers }}"
+
+      - name: Copier vars.servers dans une sortie
+        id: set
+        run: |
+          echo "Valeur brute reçue de vars.servers :"
+          echo "${{ vars.servers }}"
+          echo "${{ vars.SERVER_USER }}"
+          
+          # On écrit proprement dans GITHUB_OUTPUT
+          echo "servers<<EOF" >> $GITHUB_OUTPUT
+          echo '${{ vars.servers }}' >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+  deploy:
+    if: inputs.environment != '' && inputs.environment != 'unknown'
+    needs: prepare-matrix
+    environment: ${{ inputs.environment }}
+    env:
+      DOCKER_OWNER: ${{ inputs.DOCKER_OWNER }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        server: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
+
+    steps:
+
+      - name: Vérifier l'environnement déterminé
+        run: echo "ENV (déterminé) = ${{ needs.prepare-matrix.outputs.detect_env }}"
+      
+
+      - name: Checkout target code
+        uses: actions/checkout@v3
+
+      - name: Getting all files
+        run: ls
+
+      # Checkout du repo appelant (du repo appelant)
+      - name: Checkout the repo calling the workflow
+        uses: actions/checkout@v3
+        with:
+          repository: 'SN-DKR-DIG-TMP/digital-tmp-deploy-templates'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: deploy-templates
+          ref: swarm
+
+      - name: Getting all files ansible
+        run: ls
+
+      - name: Afficher le serveur courant
+        run: echo "Déploiement sur serveur ${{ matrix.server.name }} à l'adresse ${{ matrix.server.ansible_host }}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible
+
+      - name: Install community.docker collection
+        run: |
+          ansible-galaxy collection install community.docker
+          ansible-galaxy collection install community.general
+
+      - name: Copy deployment file
+        run: cp ${{ inputs.deployment_file_path }} deployment.yml
+
+      - name: Copy resources file
+        run: cp ${{ inputs.resources_file_path }} resources.yml
+
+      - name: Set up SSH Agent
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Check SSH agent
+        run: ssh-add -l
+
+      - name: Generate inventory file for current server
+        run: |
+          mkdir -p inventory
+          cat <<EOF > inventory/inventory.ini
+          [servers]
+          ${MATRIX_SERVER_NAME} ansible_host=${MATRIX_SERVER_HOST} ansible_user=${{ vars.SERVER_USER }} ansible_ssh_common_args='-A -o StrictHostKeyChecking=no'
+
+          [servers:vars]
+          ansible_python_interpreter=/usr/bin/python3
+          EOF
+        env:
+          MATRIX_SERVER_NAME: ${{ matrix.server.name }}
+          MATRIX_SERVER_HOST: ${{ matrix.server.ansible_host }}
+
+      - name: Configurer les variables d’environnement
+        run: |
+          if [ -z "${{ inputs.DOCKER_OWNER }}" ]  || [ "${{ inputs.DOCKER_OWNER }}" == "null" ]; then
+            echo "DOCKER_OWNER=$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+          else
+            echo "DOCKER_OWNER=${{ inputs.DOCKER_OWNER }}" >> $GITHUB_ENV
+          fi
+
+      - name: Afficher le fichier inventory
+        run: |
+          echo "Contenu du fichier inventory/inventory.ini :"
+          cat inventory/inventory.ini
+
+      - name: Test SSH connection with ansible
+        run: |
+          ansible -i inventory/inventory.ini servers -m ping
+
+      - name: Écrire le secret YAML dans un fichier
+        run: |
+          cat << 'EOF' > module_secrets.yml
+          ${{ secrets.MODULE_SECRETS }}
+          EOF
+      
+
+      - name: Run Ansible playbook for current server
+        run: |
+          if [[ "${{ inputs.debug_mode }}" == "true" ]]; then
+            VERBOSE="-vvv"
+          else
+            VERBOSE=""
+          fi
+          ansible-playbook -i inventory/inventory.ini deploy-templates/playbook.yml  \
+          --extra-vars "@deployment.yml" \
+          --extra-vars "@module_secrets.yml" \
+          --extra-vars "@resources.yml" \
+          --extra-vars "github_username=${{ secrets.GITHUB_USERNAME }} github_owner=${{ env.DOCKER_OWNER }} github_token=${{ secrets.CUSTOM_GITHUB_TOKEN }} project_name=${{ inputs.PROJECT_NAME }} environment_deploy=${{ inputs.environment }} debug_mode=${{ inputs.debug_mode }}"
+
+  generate_pages:
+    needs: deploy
+    uses: ./.github/workflows/generate_deployment_page.yml
+    with:
+      resources_file_path: ${{ inputs.deployment_file_path }}
+      environment: ${{ inputs.environment }}
+    secrets:
+      GITHUB_USERNAME: ${{ secrets.GITHUB_USERNAME }}
+      CUSTOM_GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}

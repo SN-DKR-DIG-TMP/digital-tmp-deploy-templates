@@ -8,7 +8,4 @@
     - role: filter_modules
     - role: deploy
     - role: keycloak_theme
-    - role: nginx
-      when: nginx_local.enabled | default(false) and ansible_distribution | lower == "debian"
-    - role: nginx_proxy_docker
-      when: nginx_local.enabled | default(false) and ansible_distribution | lower == "ubuntu"
+    #- role: restart

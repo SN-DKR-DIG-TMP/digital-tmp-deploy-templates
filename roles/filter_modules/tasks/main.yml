@@ -12,71 +12,66 @@
   debug:
     msg: "{{ modules | map(attribute='name') | list | zip(modules | map(attribute='image') | list) | map('join', ' ➜ ') | list }}"
 
-- name: Get current container versions ubuntu
-  community.docker.docker_container_info:
-    name: "{{ project_name }}-{{ item.name }}-1"
-  register: container_versions
+- name: Get current service versions in Swarm
+  community.docker.docker_swarm_service_info:
+    name: "{{ project_name }}_{{ item.name }}"
+  register: all_services
   loop: "{{ modules }}"
-  #when: debug_mode | bool
-  no_log: "{{ not debug_mode | bool }}"
-  when: ansible_distribution | lower == "ubuntu"
 
-- name: Get current container versions debian
-  community.docker.docker_container_info:
-    name: "{{ project_name }}_{{ item.name }}_1"
-  register: container_versions
-  loop: "{{ modules }}"
-  #when: debug_mode | bool
-  no_log: "{{ not debug_mode | bool }}"
-  when: ansible_distribution | lower == "debian"
-
-- name: Debug du nom et de l'image de chaque conteneur
+- name: Afficher les services
   debug:
-    msg: "{{ item.item.name }} => {{ item.container.Config.Image if item.container is defined else 'container info missing' }}"
-  loop: "{{ container_versions.results | rejectattr('container', 'none') | list }}"
-  when: not debug_mode | bool
+    var: all_services
 
-
-- name: Extraire la liste des images des containers
+- name: Filtrer les services du stack "{{ project_name }}"
   set_fact:
-    container_images_list: >-
+    stack_services: >-
       {{
-        container_versions.results
-        | selectattr('container.Config', 'defined')
-        | selectattr('container.Config.Image', 'defined')
-        | map(attribute='container.Config.Image')
+        all_services.results
+        | selectattr('service', 'defined')
+        | selectattr('service', '!=', none)
+        | selectattr('service.Spec.Name', 'search', '^' ~ project_name ~ '_')
+        | map(attribute='service')
         | list
       }}
 
-- name: Afficher container_images_list
+- name: Afficher les stack_services
+  debug:
+    var: stack_services
+
+- name: Afficher les services avec leur image (nom ➜ image)
+  debug:
+    msg: "{{ item.Spec.Name }} ➜ {{ item.Spec.TaskTemplate.ContainerSpec.Image | default('(no image)') }}"
+  loop: "{{ stack_services }}"
+
+- name: Initialiser la liste des services/images
+  set_fact:
+    container_images_list: []
+
+- name: Ajouter service ➜ image
+  set_fact:
+    container_images_list: "{{ container_images_list + [ {'name': item.Spec.Name, 'image': item.Spec.TaskTemplate.ContainerSpec.Image | default('(no image)') } ] }}"
+  loop: "{{ stack_services }}"
+
+- name: Afficher container_images_list (images utilisées par les services du stack)
   debug:
     msg: "{{ container_images_list }}"
 
-- name: Afficher les modules à déployer (nom et image)
+- name: Afficher les modules à déployer (nouvelle image)
   debug:
-    msg: >-
-      {{
-        modules
-        | rejectattr('image', 'in', container_images_list)
-        | map(attribute='name')
-        | zip(
-            modules
-            | rejectattr('image', 'in', container_images_list)
-            | map(attribute='image')
-          )
-        | map('join', ' => ')
-        | list
-      }}
+    msg: |
+      Modules à déployer (nouvelle image) :
+      {% for mod in modules
+         if mod.image not in container_images_list | map(attribute='image') | list %}
+      - {{ mod.name }} => {{ mod.image }}
+      {% endfor %}
 
 - name: Afficher les noms des modules à redémarrer de force
   debug:
-    msg: >-
-      {{
-        modules
-        | selectattr('force_restart', 'equalto', true)
-        | map(attribute='name')
-        | list
-      }}
+    msg: |
+      Modules à redémarrer de force :
+      {% for mod in modules | selectattr('force_restart', 'defined') | selectattr('force_restart', 'equalto', true) %}
+      - {{ mod.name }}
+      {% endfor %}
 
 
 - name: Filtrer les modules à installer ou redémarrer (sans doublons)
@@ -84,11 +79,17 @@
     modules_to_deploy: >-
       {{
         (
-          modules | rejectattr('image', 'in', container_images_list)
-                  + 
-          modules | selectattr('force_restart', 'equalto', true)
-        ) | unique(attribute='name') | list
+          modules 
+          | rejectattr('image', 'in', container_images_list | map(attribute='image') | list)
+          + 
+          modules 
+          | selectattr('force_restart', 'defined') 
+          | selectattr('force_restart', 'equalto', true)
+        ) 
+        | unique(attribute='name') 
+        | list
       }}
+
 
 - name: Valider qu'il n'y a pas de doublons
   assert:

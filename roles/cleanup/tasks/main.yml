@@ -1,0 +1,89 @@
+- name: Wait for services to be running
+  shell: |
+    SERVICES="{{ modules_string }}"
+    TIMEOUT={{ wait_timeout | default(300) }}
+    START_TIME=$(date +%s)
+
+    echo "Waiting for services to be ready: $SERVICES"
+
+    for service in $(echo "$SERVICES" | tr ',' '\n'); do
+      service_ready=false
+      while [ "$service_ready" = false ]; do
+        CURRENT_TIME=$(date +%s)
+        ELAPSED=$((CURRENT_TIME - START_TIME))
+        if [ $ELAPSED -gt $TIMEOUT ]; then
+          echo "WARNING: Timeout waiting for service $service after $TIMEOUT seconds"
+          break
+        fi
+
+        REPLICAS=$(docker service ls --filter name="$service" --format '{{"{{.Replicas}}"}}' | grep -E "^[0-9]+/[0-9]+$")
+        if [ -n "$REPLICAS" ]; then
+          RUNNING_REPLICAS=$(echo "$REPLICAS" | cut -d'/' -f1)
+          DESIRED_REPLICAS=$(echo "$REPLICAS" | cut -d'/' -f2)
+          if [ "$RUNNING_REPLICAS" = "$DESIRED_REPLICAS" ] && [ "$RUNNING_REPLICAS" != "0" ]; then
+            echo "Service $service is ready ($RUNNING_REPLICAS/$DESIRED_REPLICAS replicas)"
+            service_ready=true
+          else
+            echo "Service $service not ready yet ($RUNNING_REPLICAS/$DESIRED_REPLICAS replicas), waiting..."
+            sleep 10
+          fi
+        else
+          echo "Service $service not found or not ready, waiting..."
+          sleep 10
+        fi
+      done
+    done
+
+    echo "Services check completed"
+  args:
+    warn: false
+  when: modules_to_deploy | length > 0
+  register: wait_result
+  vars:
+    modules_string: "{{ modules_to_deploy | map(attribute='name') | join(',') }}"
+
+- name: Display services status
+  debug:
+    var: wait_result.stdout_lines
+  tags:
+    - wait-services
+
+- name: Cleanup exited containers for deployed services
+  shell: |
+    SERVICES="{{ modules_to_deploy | map(attribute='name') | join('|') }}"
+    
+    echo "Cleaning up exited containers for services: $SERVICES"
+    
+    # Lister containers exited avec labels Swarm qui matchent nos services
+    docker ps -a \
+      --filter "status=exited" \
+      --filter "label=com.docker.swarm.service.name" \
+      --format "{{.Names}} {{.Label \"com.docker.swarm.service.name\"}}" | \
+    while read container_name service_name; do
+      if [ -n "$container_name" ] && [ -n "$service_name" ]; then
+        # Extraire le nom du service (avant le premier point)
+        base_service=$(echo "$service_name" | cut -d'.' -f1)
+        # Vérifier si le service correspond à nos modules
+        if echo "$base_service" | grep -qE "^($SERVICES)$"; then
+          echo "Removing exited container: $container_name (service: $service_name)"
+          docker rm "$container_name" || echo "Warning: Could not remove $container_name"
+        fi
+      fi
+    done
+    
+    echo "Cleanup completed"
+  args:
+    warn: false
+  when:
+    - modules_to_deploy | length > 0
+    - wait_result is succeeded or skip_wait | default(false)
+  tags:
+    - cleanup-containers
+  register: cleanup_result
+
+- name: Display cleanup results
+  debug:
+    var: cleanup_result.stdout_lines
+  when: cleanup_result.stdout_lines | default([]) | length > 0
+  tags:
+    - cleanup-containers

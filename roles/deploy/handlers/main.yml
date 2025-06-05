@@ -1,0 +1,7 @@
+- name: Attendre la stabilisation du réseau
+  pause:
+    seconds: 2
+
+- name: Wait for services stabilization
+  pause:
+    seconds: 15

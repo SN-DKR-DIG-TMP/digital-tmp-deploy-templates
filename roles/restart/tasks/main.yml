@@ -1,0 +1,25 @@
+---
+
+- name: Fusionner les modules à redémarrer (sans doublons)
+  set_fact:
+    all_modules_to_force: >-
+      {{
+        (modules_to_deploy + (keycloak_modules | default([])))
+        | unique(attribute='name')
+        | list
+      }}
+
+- name: Forcer la recréation des containers des services à déployer
+  shell: docker service update --force {{ project_name }}_{{ item.name }}
+  loop: "{{ all_modules_to_force }}"
+  async: 600       # Maximum 10 minutes pour terminer
+  poll: 10         # Vérifie toutes les 10 secondes
+  become: true
+  when: all_modules_to_force | length > 0
+
+- name: Forcer le redémarrage du service Traefik
+  shell: docker service update --force traefik_traefik
+  async: 300
+  poll: 10
+  become: true
+  when: modules_to_deploy | length > 0

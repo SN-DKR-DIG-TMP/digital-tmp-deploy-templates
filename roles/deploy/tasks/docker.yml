@@ -1,0 +1,49 @@
+---
+- name: Générer un ID de déploiement unique pour forcer la recréation
+  set_fact:
+    deployment_id: "deploy-{{ ansible_date_time.epoch }}"
+  when: modules_to_deploy | length > 0 | default(true)
+
+- name: Générer un label pour forcer la mise à jour
+  set_fact:
+    force_update_label: "{{ lookup('pipe', 'date +%s') }}"
+
+- name: Generate docker-compose.yml from template
+  template:
+    src: templates/docker-compose.j2
+    dest: /opt/docker-compose-deploy.yml
+    owner: root
+    group: root
+    mode: '0644'
+  when: modules_to_deploy | length > 0
+
+- name: Validate compose file for Swarm compatibility
+  command: docker compose -f /opt/docker-compose-deploy.yml config
+  register: swarm_validation
+  changed_when: false
+  when: modules_to_deploy | length > 0
+
+- name: Show validation errors
+  debug:
+    msg: "ERREUR dans docker-compose.yml : {{ compose_validation.stderr }}"
+  when: (modules_to_deploy | length > 0) and (swarm_validation.rc != 0)
+
+- name: Fail if docker-compose.yml is invalid
+  fail:
+    msg: "docker-compose.yml validation failed, see previous error."
+  when: (modules_to_deploy | length > 0) and (swarm_validation.rc != 0)
+
+- name: Pull required Docker images before deployment
+  shell: docker pull {{ item.image }}
+  loop: "{{ modules_to_deploy }}"
+  when: modules_to_deploy | length > 0
+
+- name: Deploy stack to Swarm
+  command: >
+    docker stack deploy -c /opt/docker-compose-deploy.yml {{ project_name }}
+  args:
+    chdir: /opt
+  when: (modules_to_deploy | length > 0) and (swarm_validation.rc == 0)
+  register: stack_deploy
+  notify:
+    - Wait for services stabilization

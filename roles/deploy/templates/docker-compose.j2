@@ -5,18 +5,12 @@ services:
   {{ module.name }}:
     image: "{{ module.image }}"
     restart: always
-{% if module.replicas > 1 %}
-    ports:
-      - "{{ module.external_port }}-{{ module.external_port + module.replicas - 1 }}:{{ module.internal_port }}"
-{% else %}
-    ports:
-      - "{{ module.external_port }}:{{ module.internal_port }}"
-{% endif %}
     networks:
 {% for network in module.networks %}
-      - {{ network }}
+      - {{ project_name}}_{{ network }}
 {% endfor %}
     environment:
+      DEPLOYMENT_ID: "{{ deployment_id | default('') }}"
 {% for key, value in module.environment.items() %}
       {{ key }}: "{{ value }}"
 {% endfor %}
@@ -29,17 +23,60 @@ services:
       - "{{ volume }}"
 {% endfor %}
 {% endif %}
+{% if module.external_port is defined %}
+    ports:
+      - "{{ module.external_port }}:{{ module.internal_port | default('80') }}"
+{% endif %}
+    expose:
+      - {{ module.internal_port | default('80')}}
+    stop_grace_period: 30s
     deploy:
+      replicas: {{ module.replicas | default('1')}}
+      placement:
+        constraints:
+{% if module.placement is defined and module.placement.constraints is defined %}
+{% for constraint in module.placement.constraints %}
+          - {{ constraint }}
+{% endfor %}
+{% else %}
+          - node.role == manager
+{% endif %}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
       resources:
         limits:
           memory: "{{ module.resources.memory | default('512M') }}"
           cpus: "{{ module.resources.cpu | default('0.5') }}"
+      labels:
+        - "com.example.force-update={{ force_update_label }}"
+{% if module.server_name is defined %}
+        # Traefik labels pour HTTPS
+        - "traefik.enable=true"
+        - "traefik.docker.network={{ proxy_network }}"
+        - "traefik.http.routers.{{ module.name }}.rule=Host(`{{ module.server_name }}`)"
+        - "traefik.http.routers.{{ module.name }}.entrypoints=websecure"
+        - "traefik.http.routers.{{ module.name }}.tls=true"
+        - "traefik.http.routers.{{ module.name }}.tls.certresolver=letsencrypt"
+        - "traefik.http.services.{{ module.name }}.loadbalancer.server.port={{ module.internal_port | default('80') }}"
+        # Redirection HTTP vers HTTPS
+        - "traefik.http.routers.{{ module.name }}-http.rule=Host(`{{ module.server_name }}`)"
+        - "traefik.http.routers.{{ module.name }}-http.entrypoints=web"
+        - "traefik.http.routers.{{ module.name }}-http.middlewares=redirect-to-https"
+{% endif %}
 {% endfor %}
 
 {% if network_values %}
 networks:
 {% for network in network_values %}
-  {{ network }}:
-    driver: bridge
+  {{ project_name }}_{{ network }}:
+    driver: overlay
+    external: true
 {% endfor %}
 {% endif %}
